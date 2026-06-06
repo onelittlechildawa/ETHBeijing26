@@ -135,6 +135,12 @@ export function getReportNotaryExplorerBaseUrl() {
   return String(process.env.REPORT_NOTARY_EXPLORER_BASE_URL || "https://sepolia.etherscan.io").replace(/\/+$/, "");
 }
 
+export function getReportNotaryRpcUrl() {
+  const configured = String(process.env.REPORT_NOTARY_RPC_URL || "").trim();
+  if (configured) return configured;
+  return getReportNotaryChainId() === 11155111 ? "https://ethereum-sepolia-rpc.publicnode.com" : "";
+}
+
 export function buildExplorerUrl(baseUrl, kind, value) {
   if (!baseUrl || !value) return null;
   return `${String(baseUrl).replace(/\/+$/, "")}/${kind}/${value}`;

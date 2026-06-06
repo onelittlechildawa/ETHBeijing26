@@ -8,7 +8,10 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "check": "node scripts/check-syntax.js",
-    "deploy:notary": "node scripts/deploy-notary.js"
+    "generate:hot-projects": "node scripts/generate-hot-projects.js",
+    "deploy:notary": "node scripts/deploy-notary.js",
+    "notary:status": "node scripts/notary-status.js",
+    "notary:smoke": "node scripts/attest-sample-report.js"
   },
   "dependencies": {
     "@vercel/blob": "^2.4.0",
@@ -17,8 +20,5 @@
     "express": "^5.1.0",
     "pdf-parse": "^2.4.5",
     "viem": "^2.52.2"
-  },
-  "devDependencies": {
-    "solc": "^0.8.35"
   }
 }

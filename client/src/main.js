@@ -85,7 +85,7 @@ const messages = {
     liquidity: "Liquidity",
     volume24h: "24h volume",
     txns24h: "24h txns",
-    agentReviewed: "Agent reviewed",
+    agentReviewed: "AI reviewed",
     skepticReview: "Simple take",
     skepticVerdict: "Take",
     hypePressure: "Marketing level",
@@ -94,8 +94,12 @@ const messages = {
     nextQuestions: "Next questions",
     sourceDigest: "Digest source",
     noQuestions: "No follow-up questions from current evidence.",
-    scoreTopline: "Project Risk score",
-    riskActionsTitle: "Actionable next steps",
+    scoreTopline: "Confidence",
+    aiSummaryActionsEyebrow: "AI check",
+    aiSummaryActionsTitle: "AI summary and next steps",
+    aiSummaryFallback: "No AI summary was returned. Use the evidence and next steps below.",
+    nextSteps: "Next steps",
+    riskActionsTitle: "Next steps",
     riskActionsEmpty: "No immediate action required from current evidence.",
     projectRisk: "Project Risk",
     surfacePending: "surface pending",
@@ -144,7 +148,7 @@ const messages = {
     suppressedFalsePositives: "Suppressed false positives",
     suppressedCount: "{count} suppressed",
     falsePositive: "false positive",
-    analystNotes: "Analyst notes",
+    analystNotes: "AI summary",
     projectEvidence: "Project evidence",
     artifactCount: "{count} artifact{plural}",
     open: "Open",
@@ -201,6 +205,8 @@ const messages = {
     credentialOpenContract: "Open contract",
     credentialUnavailable: "Generate a report to create a credential.",
     credentialStored: "Stored on Sepolia",
+    translatingText: "Translating...",
+    translationUnavailable: "Translation pending.",
     summary: "Summary",
     recommendations: "Recommendations",
     suppressed: "Suppressed",
@@ -238,7 +244,7 @@ const messages = {
     exportReport: "导出报告",
     hotProjectsEyebrow: "每天自动检查",
     hotProjectsTitle: "热门 Uniswap 项目检查",
-    hotProjectsBody: "后端 API 每天挑一些热门 Ethereum/Uniswap 项目，让 agents 看一遍证据。",
+    hotProjectsBody: "后端 API 每天挑一些热门 Ethereum/Uniswap 项目，让 AI 看一遍证据。",
     hotProjectsLoading: "正在加载热门项目",
     hotProjectsEmpty: "还没有生成热门项目列表。",
     hotProjectsError: "热门列表暂时打不开",
@@ -251,7 +257,7 @@ const messages = {
     liquidity: "流动性",
     volume24h: "24h 成交量",
     txns24h: "24h 交易",
-    agentReviewed: "Agents 看过",
+    agentReviewed: "AI 看过",
     skepticReview: "简单结论",
     skepticVerdict: "结论",
     hypePressure: "宣传多不多",
@@ -260,8 +266,12 @@ const messages = {
     nextQuestions: "还该问什么",
     sourceDigest: "列表来源",
     noQuestions: "目前没有额外要问的问题。",
-    scoreTopline: "风险分",
-    riskActionsTitle: "建议你先看这些",
+    scoreTopline: "可信度",
+    aiSummaryActionsEyebrow: "AI 看法",
+    aiSummaryActionsTitle: "AI 总结和建议",
+    aiSummaryFallback: "这次没有返回 AI 总结，先看下面的证据和建议。",
+    nextSteps: "接下来先看",
+    riskActionsTitle: "接下来先看",
     riskActionsEmpty: "当前证据下没有必须立即执行的动作。",
     projectRisk: "项目情况",
     surfacePending: "还没确认官网",
@@ -270,9 +280,9 @@ const messages = {
     research: "查到的资料",
     researchItems: "{count} 条",
     findings: "发现的问题",
-    coordinatedDiligence: "几个 Agent 的看法",
-    agentCrew: "Agent 检查",
-    agentsCount: "{count} 个 agent",
+    coordinatedDiligence: "几个 AI 的看法",
+    agentCrew: "AI 检查",
+    agentsCount: "{count} 个 AI",
     analysisProgress: "实时分析进度",
     progressStep: "第 {step} / {total} 步",
     progressNormalize: "解析输入",
@@ -303,14 +313,14 @@ const messages = {
     medium: "中",
     low: "低",
     info: "信息",
-    openai: "OpenAI",
+    openai: "AI",
     recommendationAgent: "建议",
     nextDiligenceActions: "接下来可以做什么",
     actionCount: "{count} 条动作",
     suppressedFalsePositives: "排除的误报",
     suppressedCount: "已压制 {count} 条",
     falsePositive: "误报",
-    analystNotes: "AI 备注",
+    analystNotes: "AI 总结",
     projectEvidence: "查到的资料",
     artifactCount: "{count} 个证据",
     open: "打开",
@@ -367,6 +377,8 @@ const messages = {
     credentialOpenContract: "打开合约",
     credentialUnavailable: "生成报告后才能创建凭证。",
     credentialStored: "已写入 Sepolia",
+    translatingText: "正在翻译...",
+    translationUnavailable: "这段结果还在翻译。",
     summary: "摘要",
     recommendations: "建议",
     suppressed: "已压制",
@@ -781,7 +793,10 @@ function collectReportTranslationTexts(report) {
     add(finding.evidence);
   });
   (report.agents || []).forEach((agent) => add(agent.summary));
-  (report.projectEvidence?.artifacts || []).forEach((artifact) => add(artifact.summary));
+  (report.projectEvidence?.artifacts || []).forEach((artifact) => {
+    add(artifact.title);
+    add(artifact.summary);
+  });
 
   return [...new Set(texts)].slice(0, 60);
 }
@@ -813,6 +828,9 @@ function shouldTranslateClientText(text) {
   if (!/[a-zA-Z]/.test(text)) return false;
   if (/^https?:\/\//i.test(text)) return false;
   if (/^0x[a-fA-F0-9]{8,}$/.test(text)) return false;
+  if (/^(N\/A|n\/a|unknown|ok|error)$/i.test(text)) return false;
+  if (/^[A-Z0-9_.:/-]{1,16}$/.test(text)) return false;
+  if (text.split(/\s+/).length === 1 && /^[A-Z][A-Za-z0-9_.-]{0,24}$/.test(text)) return false;
   return true;
 }
 
@@ -821,7 +839,11 @@ function displayText(text) {
   if (!value || state.locale !== "zh") return value;
   const knownText = localizeRecommendationText(value);
   if (knownText !== value) return knownText;
-  return state.translations.items?.[value] || value;
+  if (state.translations.items?.[value]) return state.translations.items[value];
+  if (shouldTranslateClientText(value)) {
+    return state.translations.loading ? t("translatingText") : t("translationUnavailable");
+  }
+  return value;
 }
 
 async function loadHotProjects({ force = false } = {}) {
@@ -1031,7 +1053,7 @@ function historyItemTemplate(item) {
     <article class="history-row">
       <button class="history-load" type="button" data-history-load="${escapeHtml(item.id)}" title="${t("historyLoad")}" aria-label="${t("historyLoad")}" ${disabled}>
         <strong>${escapeHtml(item.name || "ChainLens report")}</strong>
-        <span>${escapeHtml(formatDateTime(item.generatedAt))} / ${escapeHtml(localizeSummaryLabel(item.levelLabel || item.level))} / ${formatNumber(item.findingCount || 0)} ${t("findings").toLowerCase()}</span>
+        <span>${escapeHtml(formatDateTime(item.generatedAt))} / ${escapeHtml(localizeConfidenceLabel(item.levelLabel || item.level, item.level))} / ${formatNumber(item.findingCount || 0)} ${t("findings").toLowerCase()}</span>
       </button>
       <div class="history-score">
         <strong>${formatNumber(item.score)}</strong>
@@ -1138,7 +1160,7 @@ function hotProjectCardTemplate(item) {
       </div>
       <div class="hot-verdict">
         <strong>${escapeHtml(localizeSkepticVerdict(skeptic.verdict))}</strong>
-        <span>${escapeHtml(localizeSkepticHeadline(skeptic.headline, skeptic.verdict))}</span>
+        <span>${escapeHtml(displayText(localizeSkepticHeadline(skeptic.headline, skeptic.verdict)))}</span>
       </div>
       <div class="hot-review-row">
         <span>${t("hypePressure")}: ${escapeHtml(localizeLevel(skeptic.hypePressure?.level))} / ${formatNumber(skeptic.hypePressure?.score || 0)}</span>
@@ -1188,7 +1210,7 @@ function reportTemplate(report) {
           <span>${icon(Gauge)} ${t("scoreTopline")}</span>
           <strong>${report.summary.projectScore}</strong>
         </div>
-        <h2>${escapeHtml(localizeSummaryLabel(report.summary.label))}</h2>
+        <h2>${escapeHtml(localizeConfidenceLabel(report.summary.label, report.summary.level))}</h2>
         <p>${escapeHtml(localizeSummaryDescription(report.summary.description, report.summary.level))}</p>
         <div class="severity-row">
           ${severityPill("critical", report.summary.counts.critical)}
@@ -1196,7 +1218,6 @@ function reportTemplate(report) {
           ${severityPill("medium", report.summary.counts.medium)}
           ${severityPill("low", report.summary.counts.low)}
         </div>
-        ${riskActionSummaryTemplate(report)}
       </div>
 
       <div class="token-panel">
@@ -1219,6 +1240,8 @@ function reportTemplate(report) {
           ${metric(t("findings"), formatNumber(report.findings.length))}
         </div>
       </div>
+
+      ${aiSummaryActionsTemplate(report)}
 
       ${credentialPanelTemplate(report)}
 
@@ -1261,8 +1284,6 @@ function reportTemplate(report) {
       ${researchEvidenceTemplate(report.projectEvidence)}
       ${contractEvidenceTemplate(report)}
       ${suppressedFindingsTemplate(report.suppressedFindings || [])}
-      ${analystNotesTemplate(report.openai)}
-      ${recommendationsTemplate(report)}
 
       <div class="sources-panel">
         <div class="panel-heading compact">
@@ -1279,21 +1300,36 @@ function reportTemplate(report) {
   `;
 }
 
-function riskActionSummaryTemplate(report) {
+function aiSummaryActionsTemplate(report) {
   const actions = riskActions(report).slice(0, 3);
+  const summary = report.openai?.summary || report.agents?.find((agent) => agent.id === "synthesis-agent")?.summary || "";
   return `
-    <div class="risk-action-summary">
-      <h3>${t("riskActionsTitle")}</h3>
+    <div class="ai-summary-panel">
+      <div class="panel-heading compact">
+        <div>
+          <p class="eyebrow">${t("aiSummaryActionsEyebrow")}</p>
+          <h2>${t("aiSummaryActionsTitle")}</h2>
+        </div>
+        <span>${escapeHtml(localizeStatus(openAIStatus(report)))}</span>
+      </div>
+      <div class="ai-summary-layout">
+        <div class="ai-summary-copy">
+          <p>${escapeHtml(displayText(summary || t("aiSummaryFallback")))}</p>
+        </div>
+        <div class="ai-action-block">
+          <h3>${t("nextSteps")}</h3>
       ${actions.length ? `
-        <ol>
+          <ol class="ai-action-list">
           ${actions.map((action) => `
             <li>
               <strong>${escapeHtml(displayText(action.title || action.priority || ""))}</strong>
-              <span>${escapeHtml(displayText(action.action || action.reason || ""))}</span>
+                <span>${escapeHtml(displayText(action.action || action.reason || ""))}</span>
             </li>
           `).join("")}
         </ol>
       ` : `<p>${t("riskActionsEmpty")}</p>`}
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1545,7 +1581,7 @@ function skepticReviewTemplate(report) {
       <div class="skeptic-metrics">
         ${metric(t("hypePressure"), `${formatNumber(review.hypePressure?.score || 0)} / ${escapeHtml(localizeLevel(review.hypePressure?.level))}`)}
         ${metric(t("evidenceCoverage"), `${formatNumber(review.evidenceCoverage?.score || 0)} / ${escapeHtml(localizeLevel(review.evidenceCoverage?.level))}`)}
-        ${metric(t("agentReviewed"), `${formatNumber(review.agentReview?.summaries?.length || 0)} agents`)}
+        ${metric(t("agentReviewed"), formatAgentCount(review.agentReview?.summaries?.length || 0))}
       </div>
       <div class="skeptic-columns">
         <div>
@@ -1738,8 +1774,8 @@ function artifactTemplate(artifact) {
       <div class="artifact-icon">${icon(Icon)}</div>
       <div class="artifact-body">
         <div class="artifact-title-row">
-          <h3>${escapeHtml(artifact.title)}</h3>
-          <span>${escapeHtml(artifact.type.replace(/_/g, " "))}</span>
+          <h3>${escapeHtml(displayText(artifact.title))}</h3>
+          <span>${escapeHtml(localizeArtifactType(artifact.type))}</span>
         </div>
         <p>${escapeHtml(displayText(artifact.summary || t("evidenceAttached")))}</p>
         <div class="artifact-meta">
@@ -1754,13 +1790,36 @@ function artifactTemplate(artifact) {
 
 function artifactFacts(artifact) {
   const facts = [];
-  if (artifact.status) facts.push(artifact.status);
-  if (artifact.facts?.stars !== undefined && artifact.facts?.stars !== null) facts.push(`${formatNumber(artifact.facts.stars)} stars`);
-  if (artifact.facts?.pushedAt) facts.push(`pushed ${formatDate(artifact.facts.pushedAt)}`);
-  if (artifact.facts?.pages) facts.push(`${formatNumber(artifact.facts.pages)} pages`);
-  if (artifact.facts?.textChars) facts.push(`${formatNumber(artifact.facts.textChars)} chars`);
-  if (artifact.facts?.candidateCount !== undefined) facts.push(`${formatNumber(artifact.facts.candidateCount)} candidates`);
+  if (artifact.status) facts.push(localizeStatus(artifact.status));
+  if (artifact.facts?.stars !== undefined && artifact.facts?.stars !== null) {
+    facts.push(state.locale === "zh" ? `${formatNumber(artifact.facts.stars)} 星标` : `${formatNumber(artifact.facts.stars)} stars`);
+  }
+  if (artifact.facts?.pushedAt) {
+    facts.push(state.locale === "zh" ? `更新于 ${formatDate(artifact.facts.pushedAt)}` : `pushed ${formatDate(artifact.facts.pushedAt)}`);
+  }
+  if (artifact.facts?.pages) facts.push(state.locale === "zh" ? `${formatNumber(artifact.facts.pages)} 页` : `${formatNumber(artifact.facts.pages)} pages`);
+  if (artifact.facts?.textChars) facts.push(state.locale === "zh" ? `${formatNumber(artifact.facts.textChars)} 字符` : `${formatNumber(artifact.facts.textChars)} chars`);
+  if (artifact.facts?.candidateCount !== undefined) {
+    facts.push(state.locale === "zh" ? `${formatNumber(artifact.facts.candidateCount)} 个候选` : `${formatNumber(artifact.facts.candidateCount)} candidates`);
+  }
   return facts.slice(0, 4);
+}
+
+function localizeArtifactType(type) {
+  const value = String(type || "project");
+  if (state.locale !== "zh") return value.replace(/_/g, " ");
+  return {
+    audit: "审计",
+    docs: "文档",
+    github_code_search: "代码搜索",
+    github_profile: "GitHub 主页",
+    github_repository: "代码仓库",
+    github_search: "GitHub 搜索",
+    governance: "治理",
+    web_page: "网页",
+    web_search: "网页搜索",
+    whitepaper: "白皮书"
+  }[value] || value.replace(/_/g, " ");
 }
 
 function iconForArtifact(type) {
@@ -2042,7 +2101,7 @@ function buildMarkdownReport(report) {
   lines.push(`- ${t("generatedAt")}: ${formatDateTime(report.generatedAt)}`);
   lines.push(`- ${t("network")}: ${report.project?.primaryChain?.label || "N/A"}`);
   lines.push(`- ${t("score")}: ${report.summary?.projectScore ?? "N/A"}`);
-  lines.push(`- ${t("summary")}: ${localizeSummaryLabel(report.summary?.label)} - ${localizeSummaryDescription(report.summary?.description, report.summary?.level)}`);
+  lines.push(`- ${t("summary")}: ${localizeConfidenceLabel(report.summary?.label, report.summary?.level)} - ${localizeSummaryDescription(report.summary?.description, report.summary?.level)}`);
   lines.push("");
 
   if (report.credential?.reportHash) {
@@ -2162,7 +2221,7 @@ function localizeSummaryLabel(label) {
   const value = String(label || "");
   if (state.locale !== "zh") return value || "N/A";
   return {
-    "High Project Risk": "项目高风险",
+    "High Project Risk": "可信度很低",
     "Project Needs Review": "项目需要复核",
     "Evidence Incomplete": "证据不完整",
     "No Major Signals": "未发现重大信号",
@@ -2177,13 +2236,52 @@ function localizeSummaryLabel(label) {
   }[value] || value || "N/A";
 }
 
+function localizeConfidenceLabel(label, level) {
+  const value = String(label || "");
+  const levelValue = String(level || "").toLowerCase();
+  const enByLabel = {
+    "High Project Risk": "Very low confidence",
+    "Project Needs Review": "Low confidence",
+    "Evidence Incomplete": "Evidence incomplete",
+    "No Major Signals": "Higher confidence",
+    "High Risk": "Very low confidence",
+    "Elevated Risk": "Low confidence",
+    "Needs Attention": "Needs review"
+  };
+  const zhByLabel = {
+    "High Project Risk": "可信度很低",
+    "Project Needs Review": "可信度较低",
+    "Evidence Incomplete": "证据不完整",
+    "No Major Signals": "可信度较高",
+    "High Risk": "可信度很低",
+    "Elevated Risk": "可信度较低",
+    "Needs Attention": "需要复核"
+  };
+  const enByLevel = {
+    high: "Very low confidence",
+    watch: "Low confidence",
+    incomplete: "Evidence incomplete",
+    low: "Higher confidence",
+    unscored: "Unscored"
+  };
+  const zhByLevel = {
+    high: "可信度很低",
+    watch: "可信度较低",
+    incomplete: "证据不完整",
+    low: "可信度较高",
+    unscored: "未评分"
+  };
+  if (state.locale !== "zh") return enByLabel[value] || enByLevel[levelValue] || value || "N/A";
+  return zhByLabel[value] || zhByLevel[levelValue] || localizeSummaryLabel(label);
+}
+
 function localizeSummaryDescription(description, level) {
   if (state.locale !== "zh") return description || "";
   return {
-    high: "项目级证据或代币证据中发现了需要优先处理的重大风险。",
-    watch: "项目存在应在依赖或交互前复核的风险信号。",
-    incomplete: "当前项目证据不完整；建议补充官方入口、文档、仓库或搜索源后重新分析。",
-    low: "当前证据中未发现重大项目级风险信号。",
+    high: "可信度很低。先别只听项目方说法，优先核对合约、源码、审计和真实使用证据。",
+    watch: "可信度偏低，里面有几处需要在交互或依赖前先复核。",
+    incomplete: "当前项目证据不完整；补充官网、文档、仓库或搜索源后再看会更准。",
+    low: "当前证据链比较完整，暂时没看到需要优先处理的重大问题。",
     unscored: "该地址未被识别为 ERC-20 代币，因此跳过持有人、税费和流动性评分。"
   }[level] || description || "";
 }
@@ -2191,13 +2289,13 @@ function localizeSummaryDescription(description, level) {
 function localizeAgentName(agent) {
   if (state.locale !== "zh") return agent.name || "AI Agent";
   return {
-    "research-agent": "资料检查 Agent",
-    "open-source-review-agent": "代码检查 Agent",
-    "onchain-risk-agent": "链上风险 Agent",
-    "synthesis-agent": "综合判断 Agent",
-    "recommendation-agent": "建议 Agent",
-    "agent-orchestrator": "Agent 编排器"
-  }[agent.id] || agent.name || "AI Agent";
+    "research-agent": "资料检查 AI",
+    "open-source-review-agent": "代码检查 AI",
+    "onchain-risk-agent": "链上风险 AI",
+    "synthesis-agent": "综合判断 AI",
+    "recommendation-agent": "建议 AI",
+    "agent-orchestrator": "AI 编排器"
+  }[agent.id] || agent.name || "AI";
 }
 
 function localizeAgentSummary(agent) {
@@ -2214,8 +2312,8 @@ function localizeAgentSummary(agent) {
       : "链上检查没有发现明显问题。",
     "synthesis-agent": "综合判断已经完成，先看上面的简单结论和下面的问题清单。",
     "recommendation-agent": `给出了 ${formatNumber((agent.recommendations || []).length)} 条下一步建议。`,
-    "agent-orchestrator": "Agent 检查过程出错，先看基础报告。"
-  }[agent.id] || agent.summary || "Agent 检查完成。";
+    "agent-orchestrator": "AI 检查过程出错，先看基础报告。"
+  }[agent.id] || agent.summary || "AI 检查完成。";
 }
 
 function localizeProgressLabel(progress) {

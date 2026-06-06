@@ -6,4 +6,5 @@ dist/
 .vercel/
 .DS_Store
 server/.cache/
+chainlens-notary-smoke-*.json
 .vercel

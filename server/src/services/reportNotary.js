@@ -6,6 +6,7 @@ import {
   getReportNotaryChainId,
   getReportNotaryChainName,
   getReportNotaryExplorerBaseUrl,
+  getReportNotaryRpcUrl,
   hashReport,
   validateReportCredential
 } from "./reportCredential.js";
@@ -110,7 +111,7 @@ export function getNotaryConfig({ requireWallet = false } = {}) {
   const chainId = getReportNotaryChainId();
   const chainName = getReportNotaryChainName();
   const explorerBaseUrl = getReportNotaryExplorerBaseUrl();
-  const rpcUrl = String(process.env.REPORT_NOTARY_RPC_URL || "").trim();
+  const rpcUrl = getReportNotaryRpcUrl();
   const contractAddress = normalizeAddress(process.env.REPORT_NOTARY_CONTRACT_ADDRESS);
   const privateKey = normalizePrivateKey(process.env.REPORT_NOTARY_PRIVATE_KEY);
   const missing = [];

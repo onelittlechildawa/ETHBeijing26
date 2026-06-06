@@ -1,40 +1,20 @@
 import "../src/services/env.js";
-import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import solc from "solc";
-import { getReportNotaryChainId, getReportNotaryChainName, getReportNotaryExplorerBaseUrl } from "../src/services/reportCredential.js";
+import { getReportNotaryChainId, getReportNotaryChainName, getReportNotaryExplorerBaseUrl, getReportNotaryRpcUrl } from "../src/services/reportCredential.js";
+import artifact from "../../contracts/artifacts/ChainLensReportNotary.json" with { type: "json" };
 
 const privateKey = normalizePrivateKey(process.env.REPORT_NOTARY_PRIVATE_KEY);
-const rpcUrl = String(process.env.REPORT_NOTARY_RPC_URL || "").trim();
+const rpcUrl = getReportNotaryRpcUrl();
+const workspaceEnvPath = fileURLToPath(new URL("../../.env", import.meta.url));
 
-if (!privateKey || !rpcUrl) {
-  console.error("Set REPORT_NOTARY_PRIVATE_KEY and REPORT_NOTARY_RPC_URL before deploying.");
+if (!privateKey) {
+  console.error("Set REPORT_NOTARY_PRIVATE_KEY before deploying.");
   process.exit(1);
 }
 
-const source = await readFile(new URL("../../contracts/ChainLensReportNotary.sol", import.meta.url), "utf8");
-const input = {
-  language: "Solidity",
-  sources: {
-    "ChainLensReportNotary.sol": { content: source }
-  },
-  settings: {
-    outputSelection: {
-      "*": {
-        "*": ["abi", "evm.bytecode.object"]
-      }
-    }
-  }
-};
-const output = JSON.parse(solc.compile(JSON.stringify(input)));
-const errors = (output.errors || []).filter((error) => error.severity === "error");
-if (errors.length) {
-  errors.forEach((error) => console.error(error.formattedMessage || error.message));
-  process.exit(1);
-}
-
-const contract = output.contracts["ChainLensReportNotary.sol"].ChainLensReportNotary;
 const account = privateKeyToAccount(privateKey);
 const chainId = getReportNotaryChainId();
 const chainName = getReportNotaryChainName();
@@ -54,8 +34,8 @@ console.log(`Deploying ChainLensReportNotary to ${chainName} (${chainId})`);
 console.log(`Issuer: ${account.address}`);
 
 const hash = await walletClient.deployContract({
-  abi: contract.abi,
-  bytecode: `0x${contract.evm.bytecode.object}`,
+  abi: artifact.abi,
+  bytecode: artifact.bytecode,
   args: [account.address],
   account
 });
@@ -67,6 +47,18 @@ console.log(`Explorer: ${explorerBaseUrl}/address/${receipt.contractAddress}`);
 console.log("");
 console.log("Add this to .env:");
 console.log(`REPORT_NOTARY_CONTRACT_ADDRESS=${receipt.contractAddress}`);
+
+try {
+  const envPath = workspaceEnvPath;
+  const env = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
+  const next = /REPORT_NOTARY_CONTRACT_ADDRESS=/.test(env)
+    ? env.replace(/REPORT_NOTARY_CONTRACT_ADDRESS=.*/, `REPORT_NOTARY_CONTRACT_ADDRESS=${receipt.contractAddress}`)
+    : `${env.replace(/\s*$/, "")}\nREPORT_NOTARY_CONTRACT_ADDRESS=${receipt.contractAddress}\n`;
+  writeFileSync(envPath, next.endsWith("\n") ? next : `${next}\n`);
+  console.log("Updated .env with REPORT_NOTARY_CONTRACT_ADDRESS.");
+} catch (error) {
+  console.log(`Could not update .env automatically: ${error.message}`);
+}
 
 function normalizePrivateKey(value) {
   const key = String(value || "").trim();

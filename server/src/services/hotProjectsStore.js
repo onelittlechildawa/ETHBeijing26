@@ -1,16 +1,29 @@
 import { get, put } from "@vercel/blob";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HOT_PROJECTS_PATH = "hot-projects/latest.json";
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const serverRoot = resolve(currentDir, "../..");
+const LOCAL_HOT_PROJECTS_PATH = resolve(serverRoot, ".cache", HOT_PROJECTS_PATH);
 let memoryDigest = null;
 
 export function hotProjectsStorageStatus() {
   if (hasBlobConfig()) return { status: "blob", path: HOT_PROJECTS_PATH };
-  return { status: "memory", path: HOT_PROJECTS_PATH };
+  return { status: "local", path: LOCAL_HOT_PROJECTS_PATH };
 }
 
 export async function readHotProjectsDigest() {
   if (!hasBlobConfig()) {
-    return memoryDigest;
+    if (memoryDigest) return memoryDigest;
+    try {
+      memoryDigest = JSON.parse(await readFile(LOCAL_HOT_PROJECTS_PATH, "utf8"));
+      return memoryDigest;
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
   }
 
   const result = await get(HOT_PROJECTS_PATH, {
@@ -27,7 +40,9 @@ export async function writeHotProjectsDigest(digest) {
   memoryDigest = digest;
 
   if (!hasBlobConfig()) {
-    return { status: "memory", path: HOT_PROJECTS_PATH };
+    await mkdir(dirname(LOCAL_HOT_PROJECTS_PATH), { recursive: true });
+    await writeFile(LOCAL_HOT_PROJECTS_PATH, JSON.stringify(digest, null, 2));
+    return { status: "local", path: LOCAL_HOT_PROJECTS_PATH };
   }
 
   const blob = await put(HOT_PROJECTS_PATH, JSON.stringify(digest, null, 2), {
