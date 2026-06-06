@@ -478,9 +478,9 @@ function baseProjectScore(tokenScores, tokenReports) {
 
   if (!tokenReports.length) return 62;
 
-  const unknownCount = tokenReports.filter((report) => report.classification?.assetType === "non_token_or_unknown").length;
-  if (unknownCount === tokenReports.length) return 58;
-  if (unknownCount > 0) return 64;
+  const unscoredCount = tokenReports.filter((report) => isTokenModelExcluded(report.classification)).length;
+  if (unscoredCount === tokenReports.length) return 58;
+  if (unscoredCount > 0) return 64;
   return 72;
 }
 

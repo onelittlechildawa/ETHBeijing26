@@ -1,4 +1,5 @@
 import { cached } from "./cache.js";
+import { getChain } from "./chains.js";
 import { isBurnAddress } from "./knownAddresses.js";
 import { requestWebResearchAI } from "./openai.js";
 
@@ -758,13 +759,19 @@ function buildSurfaces(artifacts, seed, project) {
   }
 
   for (const artifact of artifacts) {
-    addSurface(surfaces, artifact.type, artifact.title, artifact.url);
+    if (!isInternalGeneratedArtifact(artifact)) {
+      addSurface(surfaces, artifact.type, artifact.title, artifact.url);
+    }
     for (const link of artifact.links || []) {
       addSurface(surfaces, link.type, link.label, link.url);
     }
   }
 
   return Object.fromEntries(Object.entries(surfaces).map(([key, value]) => [key, uniqueSurfaces(value)]));
+}
+
+function isInternalGeneratedArtifact(artifact) {
+  return artifact?.type === "web_search" && /\/chat\/completions\/?$/i.test(String(artifact.url || ""));
 }
 
 function addSurface(surfaces, type, label, url) {
@@ -1003,11 +1010,12 @@ function shouldUseOpenAIWebResearch(seed, project, artifactsByUrl, xapiSource) {
 
 function webResearchQuery(seed, project) {
   const name = meaningfulName(project?.name || seed?.name || seed?.query);
-  if (name) return name;
   const address = collectSearchAddresses(seed, project)[0];
-  if (!address) return null;
-  const chain = project?.primaryChain?.label || seed?.chainId || "Ethereum";
-  return `${chain} contract address ${address}`;
+  if (address) {
+    const chain = project?.primaryChain?.label || getChain(seed?.chainId)?.label || "Ethereum";
+    return `${chain} contract address ${address}${name ? ` ${name}` : ""}`;
+  }
+  return name || null;
 }
 
 function hasOfficialResearchSurface(artifactsByUrl) {

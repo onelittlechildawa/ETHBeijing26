@@ -93,11 +93,13 @@ export function classifyContractScope({ seed, report, profile, projectEvidence }
     });
   }
 
-  if (abiSummary && abiSummary.erc20Like === false && originalClassification.assetType !== "erc20_token") {
+  if (abiSummary && abiSummary.erc20Like === false && (originalClassification.assetType !== "erc20_token" || weakTokenEvidence)) {
     return scopeOverride({
       scope: "non_token_contract",
       confidence: 0.82,
-      reason: "Sourcify verified ABI is not ERC-20-like",
+      reason: weakTokenEvidence
+        ? "Sourcify verified ABI is not ERC-20-like, and token metadata has no supply, holder, market, name, or symbol evidence"
+        : "Sourcify verified ABI is not ERC-20-like",
       originalClassification
     });
   }

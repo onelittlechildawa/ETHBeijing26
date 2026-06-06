@@ -366,13 +366,13 @@ function buildMetrics(token, pair) {
 
 function classifyAsset(token, pair) {
   const hasTokenIdentity = Boolean(
-    token?.token_name ||
-    token?.token_symbol ||
-    token?.total_supply ||
-    token?.holder_count ||
-    pair?.baseToken?.name ||
-    pair?.baseToken?.symbol ||
-    pair?.liquidity?.usd
+    hasText(token?.token_name) ||
+    hasText(token?.token_symbol) ||
+    positiveNumber(token?.total_supply) ||
+    positiveNumber(token?.holder_count) ||
+    hasText(pair?.baseToken?.name) ||
+    hasText(pair?.baseToken?.symbol) ||
+    positiveNumber(pair?.liquidity?.usd)
   );
 
   if (hasTokenIdentity) {
@@ -541,6 +541,15 @@ function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function positiveNumber(value) {
+  const numeric = toNumber(value);
+  return numeric !== null && numeric > 0;
+}
+
+function hasText(value) {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function formatPercent(value) {
