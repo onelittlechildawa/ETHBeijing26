@@ -103,6 +103,7 @@ When `OPENAI_API_KEY` is not configured, the endpoint returns `openai.status = "
 The current workbench includes:
 
 - Project-level identity, asset, governance, community, and data-quality findings
+- Narrative-to-delivery checks that flag promotional claims when they are not backed by verified contracts, active repositories, audits, governance, or other reproducible artifacts
 - Contract security and holder concentration signals from GoPlus
 - Liquidity signals from GoPlus and DEXScreener, marked as third-party auxiliary evidence
 - Contract-address project lookup from CoinGecko, used to infer homepage, repos, socials, and explorer links when the user only provides an address
@@ -262,7 +263,8 @@ curl -X POST "http://localhost:8787/api/openai/project" \
 
 当前工作台包含：
 
-- 项目级别的身份、资产、治理、社区和数据质量发现
+- 项目级别的身份、资产、叙事兑现、治理、社区和数据质量发现
+- 叙事兑现检查：当宣传或愿景声明缺少已验证合约、活跃仓库、审计、治理或其他可复现交付证据支撑时给出提示
 - 来自 GoPlus 的合约安全性和持币集中度信号
 - 来自 GoPlus 和 DEXScreener 的流动性信号，标记为第三方辅助证据
 - 来自 CoinGecko 的合约地址项目查询，用于在用户仅提供地址时推断主页、仓库、社交链接和浏览器链接

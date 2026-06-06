@@ -1625,6 +1625,7 @@ function localizeDimension(dimension) {
   return {
     identity: "身份",
     asset: "资产",
+    delivery: "交付兑现",
     market: "市场",
     governance: "治理",
     community: "社区",
@@ -1666,6 +1667,9 @@ function localizeRecommendationText(text) {
     "Verify liquidity control": "核实流动性控制",
     "Check LP ownership, lock status, and pair liquidity on the current trading venue.": "检查当前交易场所的 LP 持有人、锁仓状态和交易对流动性。",
     "Liquidity control can affect exit reliability and market manipulation risk.": "流动性控制会影响退出可靠性和市场操纵风险。",
+    "Validate narrative against shipped evidence": "核对叙事与实际交付",
+    "Map the project's claims to verified contracts, active repositories, audits, governance, usage, or live product evidence before treating the story as substance.": "先把项目声明逐条映射到已验证合约、活跃仓库、审计、治理、使用量或线上产品证据，再把故事当作实质。",
+    "Marketing language without delivery evidence can inflate perceived credibility.": "缺少交付证据的宣传语言会抬高项目的表面可信度。",
     "Bind the report to an official project surface": "绑定官方项目入口",
     "Add an official website, docs page, repository, or whitepaper URL and rerun the report.": "补充官网、文档、仓库或白皮书 URL 后重新运行报告。",
     "Project identity is weak without an official surface tying claims to contracts.": "缺少能把项目声明与合约绑定的官方入口时，项目身份证据较弱。",

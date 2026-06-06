@@ -415,6 +415,7 @@ async function requestRecommendationAI(context, fallbackRecommendations) {
       "Schema: {\"summary\":\"string\",\"recommendations\":[{\"priority\":\"urgent|high|medium|low\",\"title\":\"string\",\"action\":\"string\",\"reason\":\"string\",\"evidence\":\"string\"}]}",
       "Recommend next diligence and safety actions only.",
       "Do not provide investment advice, buy or sell instructions, price predictions, guaranteed outcomes, or scam labels.",
+      "Prioritize narrative-to-delivery gaps when project claims are not backed by verified contracts, active repositories, audits, governance, or other reproducible artifacts.",
       "Use urgent only for critical findings, honeypot-like behavior, owner balance modification, or direct wallet exposure.",
       "Keep recommendations concrete and evidence-backed."
     ].join(" "),
@@ -487,6 +488,17 @@ function buildRuleRecommendations({ project, projectEvidence, tokenReports = [],
       action: "Check LP ownership, lock status, and pair liquidity on the current trading venue.",
       reason: "Liquidity control can affect exit reliability and market manipulation risk.",
       evidence: liquiditySignal.evidence
+    }));
+  }
+
+  const narrativeFinding = activeFindings.find((finding) => finding.dimension === "delivery" || /narrative claims outpace/i.test(finding.title || ""));
+  if (narrativeFinding) {
+    recommendations.push(recommendation({
+      priority: narrativeFinding.severity === "high" ? "high" : "medium",
+      title: "Validate narrative against shipped evidence",
+      action: "Map the project's claims to verified contracts, active repositories, audits, governance, usage, or live product evidence before treating the story as substance.",
+      reason: "Marketing language without delivery evidence can inflate perceived credibility.",
+      evidence: narrativeFinding.evidence || narrativeFinding.title
     }));
   }
 

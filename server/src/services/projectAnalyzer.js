@@ -8,6 +8,14 @@ import { classifyContractScope, isTokenModelExcluded } from "./projectScope.js";
 
 const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
 const MAX_CONTRACT_TARGETS = 12;
+const NARRATIVE_LANGUAGE_PATTERNS = [
+  { label: "future or revolution language", pattern: /\b(future of|revolutioni[sz]e|revolutionary|disrupt|transform|next[- ]generation|redefine)\b/i },
+  { label: "superlative positioning", pattern: /\b(leading|world[- ]class|best[- ]in[- ]class|cutting[- ]edge|breakthrough|game[- ]changing|ultimate)\b/i },
+  { label: "growth or reward promises", pattern: /\b(unlock|empower|mass adoption|passive income|yield|rewards?|airdrop|guaranteed|risk[- ]free|100x|moon)\b/i },
+  { label: "trend-heavy labels", pattern: /\b(ai[- ]powered|ai agent|depin|rwa|metaverse|gamefi|socialfi)\b/i },
+  { label: "Chinese vision or promotion terms", pattern: /叙事|愿景|赋能|革命|颠覆|下一代|重新定义|引领|打造|生态|空投|收益|稳赚|无风险|百倍|万倍|爆发/i }
+];
+const NARRATIVE_ARTIFACT_TYPES = new Set(["web_page", "whitepaper", "docs", "web_search"]);
 
 export async function analyzeProject(input) {
   const seed = normalizeProjectInput(input);
@@ -380,6 +388,15 @@ function buildLocalFindings(seed, tokenReports, project, contractProfiles, proje
     }));
   }
 
+  const narrativeFinding = buildNarrativeDeliveryFinding({
+    researchArtifacts,
+    researchSurfaces,
+    tokenReports,
+    contractProfiles,
+    projectEvidence
+  });
+  if (narrativeFinding) findings.push(narrativeFinding);
+
   for (const artifact of researchArtifacts.filter((item) => item.type === "github_repository")) {
     const pushedAt = artifact.facts?.pushedAt ? new Date(artifact.facts.pushedAt) : null;
     const staleDays = pushedAt && Number.isFinite(pushedAt.getTime())
@@ -438,6 +455,110 @@ function buildLocalFindings(seed, tokenReports, project, contractProfiles, proje
   return findings;
 }
 
+function buildNarrativeDeliveryFinding({ researchArtifacts, researchSurfaces, tokenReports, contractProfiles, projectEvidence }) {
+  const narrative = assessNarrativeLanguage(researchArtifacts);
+  if (narrative.matchCount < 2) return null;
+
+  const delivery = assessDeliveryEvidence({
+    researchArtifacts,
+    researchSurfaces,
+    tokenReports,
+    contractProfiles,
+    projectEvidence
+  });
+  if (delivery.score >= 3) return null;
+
+  const severity = !delivery.contractBinding || delivery.score <= 1 ? "high" : "medium";
+  const missingEvidence = delivery.missing.slice(0, 4).join(", ");
+  return finding({
+    dimension: "delivery",
+    title: "Narrative claims outpace verifiable delivery evidence",
+    severity,
+    confidence: Math.min(0.84, 0.58 + narrative.matchCount * 0.06 + delivery.missing.length * 0.02),
+    evidence: `${narrative.samples.join("; ")}; missing: ${missingEvidence || "delivery evidence is thin"}`,
+    context: "Collected project surfaces contain promotional or vision-heavy language, but ChainLens did not confirm enough shipped-code, verified-contract, audit, governance, or contract-binding evidence. Treat the story as unproven until claims map to live artifacts."
+  });
+}
+
+function assessNarrativeLanguage(artifacts = []) {
+  const matches = [];
+  for (const artifact of artifacts.filter((item) => NARRATIVE_ARTIFACT_TYPES.has(item.type))) {
+    const text = narrativeText(artifact);
+    if (!text) continue;
+    for (const item of NARRATIVE_LANGUAGE_PATTERNS) {
+      if (item.pattern.test(text)) {
+        matches.push({
+          label: item.label,
+          title: artifact.title || artifact.type,
+          url: artifact.url
+        });
+      }
+    }
+  }
+
+  const seen = new Set();
+  const uniqueMatches = matches.filter((match) => {
+    const key = `${match.label}-${match.url || match.title}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return {
+    matchCount: uniqueMatches.length,
+    samples: uniqueMatches
+      .slice(0, 3)
+      .map((match) => `${match.label} in ${match.title}`)
+  };
+}
+
+function assessDeliveryEvidence({ researchArtifacts = [], researchSurfaces = {}, tokenReports = [], contractProfiles = [], projectEvidence = null }) {
+  const hasActiveRepo = researchArtifacts.some(isActiveRepositoryArtifact);
+  const hasRepoSurface = (researchSurfaces.repos || []).length > 0;
+  const hasAudit = (researchSurfaces.audits || []).length > 0;
+  const hasGovernance = (researchSurfaces.governance || []).length > 0;
+  const hasDocs = (researchSurfaces.docs || []).length > 0;
+  const hasVerifiedContract = contractProfiles.some((result) => result.profile?.verifiedContract);
+  const contractBinding = tokenReports.length > 0 || (projectEvidence?.addresses || []).length > 0;
+  const score = [
+    contractBinding,
+    hasVerifiedContract,
+    hasActiveRepo,
+    hasAudit,
+    hasGovernance
+  ].filter(Boolean).length + (hasDocs ? 0.5 : 0) + (hasRepoSurface && !hasActiveRepo ? 0.5 : 0);
+  const missing = [
+    contractBinding ? null : "no contract address bound to the project",
+    hasVerifiedContract ? null : "no verified contract source confirmed",
+    hasActiveRepo ? null : "no active official repository confirmed",
+    hasAudit ? null : "no independent audit surface confirmed",
+    hasGovernance ? null : "no governance surface confirmed"
+  ].filter(Boolean);
+
+  return {
+    score,
+    missing,
+    contractBinding
+  };
+}
+
+function isActiveRepositoryArtifact(artifact) {
+  if (artifact.type !== "github_repository") return false;
+  if (artifact.facts?.archived || artifact.facts?.disabled) return false;
+  const pushedAt = artifact.facts?.pushedAt ? new Date(artifact.facts.pushedAt) : null;
+  if (!pushedAt || !Number.isFinite(pushedAt.getTime())) return artifact.status === "ok" || artifact.status === "partial";
+  const staleDays = Math.floor((Date.now() - pushedAt.getTime()) / 86400000);
+  return staleDays <= 540;
+}
+
+function narrativeText(artifact) {
+  return [
+    artifact.title,
+    artifact.summary,
+    ...(artifact.excerpts || [])
+  ].filter(Boolean).join(" ").slice(0, 5000);
+}
+
 function summarizeProject(findings, tokenReports) {
   const counts = countSeverity(findings);
   const tokenScores = tokenReports
@@ -447,10 +568,11 @@ function summarizeProject(findings, tokenReports) {
   const averageTokenScore = baseProjectScore(tokenScores, tokenReports);
   const penalty = counts.critical * 32 + counts.high * 18 + counts.medium * 8 + counts.low * 3;
   const projectScore = Math.max(0, Math.min(100, Math.round(averageTokenScore - penalty)));
+  const severeDeliveryGap = findings.some((finding) => finding.dimension === "delivery" && finding.severity === "high");
 
   let label = "No Major Signals";
   let level = "low";
-  if (counts.critical >= 1 || counts.high >= 3) {
+  if (counts.critical >= 1 || counts.high >= 3 || severeDeliveryGap) {
     label = "High Project Risk";
     level = "high";
   } else if (counts.high >= 1 || counts.medium >= 2) {
@@ -553,7 +675,7 @@ function priorityForSummary(summary) {
 }
 
 function buildProjectDimensions(findings, tokenReports) {
-  const dimensionKeys = ["identity", "asset", "market", "governance", "community", "data"];
+  const dimensionKeys = ["identity", "asset", "delivery", "market", "governance", "community", "data"];
   const scoredTokenReports = tokenReports.filter(isScoredTokenReport);
   const tokenPenalty = scoredTokenReports.reduce((sum, report) => {
     const score = Number(report.summary?.trustScore);
@@ -691,6 +813,7 @@ function labelForDimension(key) {
   return {
     identity: "Identity",
     asset: "Asset",
+    delivery: "Delivery",
     market: "Market",
     governance: "Governance",
     community: "Community",
