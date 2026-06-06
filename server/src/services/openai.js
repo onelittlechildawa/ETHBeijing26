@@ -24,13 +24,14 @@ export async function requestProjectOpenAI({ project, tokenReports = [], walletE
   };
 }
 
-export async function requestStructuredAI({ system, payload, temperature = 0.2 }) {
+export async function requestStructuredAI({ system, payload, temperature = 0.2, model = process.env.OPENAI_MODEL || DEFAULT_MODEL }) {
   if (process.env.OPENAI_MOCK_RESPONSE) {
     const mock = JSON.parse(process.env.OPENAI_MOCK_RESPONSE);
     return {
       status: "mock",
       payload: extractPayload(mock),
-      raw: mock
+      raw: mock,
+      model
     };
   }
 
@@ -39,7 +40,8 @@ export async function requestStructuredAI({ system, payload, temperature = 0.2 }
     return {
       status: "not_configured",
       payload: null,
-      raw: null
+      raw: null,
+      model
     };
   }
 
@@ -53,7 +55,7 @@ export async function requestStructuredAI({ system, payload, temperature = 0.2 }
         authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
+        model,
         temperature,
         messages: [
           {
@@ -71,14 +73,16 @@ export async function requestStructuredAI({ system, payload, temperature = 0.2 }
     return {
       status: "ok",
       payload: extractPayload(raw),
-      raw
+      raw,
+      model
     };
   } catch (error) {
     return {
       status: "error",
       payload: null,
       raw: null,
-      message: error.message
+      message: error.message,
+      model
     };
   }
 }

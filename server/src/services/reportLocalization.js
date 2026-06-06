@@ -2,6 +2,7 @@ import { requestStructuredAI } from "./openai.js";
 
 const MAX_LOCALIZED_TEXTS = 80;
 const MAX_TEXT_LENGTH = 1200;
+const DEFAULT_LOCALIZATION_MODEL = "deepseek-v4-flash";
 
 export async function buildReportLocalization(report) {
   const texts = collectReportTexts(report);
@@ -35,7 +36,8 @@ export async function buildReportLocalization(report) {
       },
       texts
     },
-    temperature: 0.1
+    temperature: 0.1,
+    model: process.env.OPENAI_LOCALIZATION_MODEL || DEFAULT_LOCALIZATION_MODEL
   });
 
   return {
@@ -43,6 +45,7 @@ export async function buildReportLocalization(report) {
     zh: {
       status: result.status,
       source: "openai-compatible",
+      model: result.model || process.env.OPENAI_LOCALIZATION_MODEL || DEFAULT_LOCALIZATION_MODEL,
       generatedAt: new Date().toISOString(),
       message: result.message,
       texts: normalizeLocalizedTexts(result.payload || result.raw, texts)

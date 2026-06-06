@@ -60,7 +60,10 @@ ChainLens collects all the evidence itself — it scrapes sites, reads repos, pu
 OPENAI_BASE_URL=https://your-llm-provider.com/v1
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=your_model_name
+OPENAI_LOCALIZATION_MODEL=deepseek-v4-flash
 ```
+
+`OPENAI_MODEL` handles scoring and synthesis. `OPENAI_LOCALIZATION_MODEL` handles the Chinese display copy returned under `localized.zh.texts`.
 
 ### Optional: Extra Data Sources
 
@@ -313,9 +316,10 @@ ChainLens 自己负责收集所有证据——爬网站、读仓库、拉链上�
 OPENAI_BASE_URL=https://你的大模型服务/v1
 OPENAI_API_KEY=你的密钥
 OPENAI_MODEL=模型名
+OPENAI_LOCALIZATION_MODEL=deepseek-v4-flash
 ```
 
-报告 API 会保留英文原文，同时返回中文界面用的 `localized.zh.texts`，不需要另外配置翻译服务。
+报告 API 会保留英文原文，同时返回中文界面用的 `localized.zh.texts`，不需要另外配置翻译服务。`OPENAI_MODEL` 负责评分和总结，`OPENAI_LOCALIZATION_MODEL` 负责中文展示文案。
 
 ### 选填：更多数据源
 
