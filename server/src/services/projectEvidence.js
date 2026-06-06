@@ -1,5 +1,6 @@
 import { cached } from "./cache.js";
 import { isBurnAddress } from "./knownAddresses.js";
+import { requestWebResearchAI } from "./openai.js";
 
 const TTL_MS = 30 * 60 * 1000;
 const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
@@ -8,6 +9,8 @@ const MAX_INITIAL_URLS = 8;
 const MAX_ARTIFACTS = 12;
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_CHARS = 24000;
+const MAX_GITHUB_ADDRESS_SEARCHES = 3;
+const MAX_GITHUB_ADDRESS_RESULTS = 5;
 
 export async function collectProjectEvidence({ seed, project = null, existingEvidence = null }) {
   const artifactsByUrl = new Map((existingEvidence?.artifacts || []).map((artifact) => [artifact.url, artifact]));
@@ -39,6 +42,29 @@ export async function collectProjectEvidence({ seed, project = null, existingEvi
     sources.push(result.source);
   }
 
+  const githubAddressResult = await collectGitHubAddressSearchEvidence({ seed, project });
+  if (githubAddressResult.artifact) {
+    const artifact = markDiscovery(githubAddressResult.artifact, "search");
+    artifactsByUrl.set(artifact.url, artifact);
+  }
+  if (githubAddressResult.source) sources.push(githubAddressResult.source);
+
+  const xapiResult = await collectXapiSearchEvidence(project?.name || seed?.name || seed?.query);
+  if (xapiResult.artifact) {
+    const artifact = markDiscovery(xapiResult.artifact, "search");
+    artifactsByUrl.set(artifact.url, artifact);
+  }
+  if (xapiResult.source) sources.push(xapiResult.source);
+
+  if (shouldUseOpenAIWebResearch(seed, project, artifactsByUrl, xapiResult.source)) {
+    const result = await collectOpenAIWebResearchEvidence({ seed, project });
+    if (result.artifact) {
+      const artifact = markDiscovery(result.artifact, "search");
+      artifactsByUrl.set(artifact.url, artifact);
+    }
+    if (result.source) sources.push(result.source);
+  }
+
   if (shouldSearchByName(seed, project, artifactsByUrl)) {
     const result = await collectGitHubSearchEvidence(project?.name || seed?.name || seed?.query);
     if (result.artifact) {
@@ -47,13 +73,6 @@ export async function collectProjectEvidence({ seed, project = null, existingEvi
     }
     sources.push(result.source);
   }
-
-  const xapiResult = await collectXapiSearchEvidence(project?.name || seed?.name || seed?.query);
-  if (xapiResult.artifact) {
-    const artifact = markDiscovery(xapiResult.artifact, "search");
-    artifactsByUrl.set(artifact.url, artifact);
-  }
-  if (xapiResult.source) sources.push(xapiResult.source);
 
   const artifacts = [...artifactsByUrl.values()].slice(0, MAX_ARTIFACTS);
   const surfaces = buildSurfaces(artifacts, seed, project);
@@ -417,6 +436,119 @@ async function collectGitHubSearchEvidence(name) {
   }
 }
 
+async function collectGitHubAddressSearchEvidence({ seed, project }) {
+  const addresses = collectSearchAddresses(seed, project).slice(0, MAX_GITHUB_ADDRESS_SEARCHES);
+  if (!addresses.length) return { artifact: null, source: null };
+
+  if (!process.env.GITHUB_TOKEN) {
+    return {
+      artifact: null,
+      source: {
+        name: "GitHub Address Code Search",
+        status: "disabled",
+        message: "Set GITHUB_TOKEN to enable GitHub code search for contract addresses."
+      }
+    };
+  }
+
+  try {
+    const results = [];
+    const cacheStates = [];
+    for (const address of addresses) {
+      const searchQuery = encodeURIComponent(`"${address}" in:file`);
+      const { value, cache } = await cached(`project-evidence:github-code-address:${address}`, TTL_MS, async () => githubJson(`/search/code?q=${searchQuery}&per_page=${MAX_GITHUB_ADDRESS_RESULTS}`));
+      cacheStates.push(cache);
+      results.push(normalizeGitHubAddressSearch(address, value));
+    }
+
+    const matches = uniqueGitHubCodeMatches(results.flatMap((result) => result.matches));
+    if (!matches.length) {
+      return {
+        artifact: null,
+        source: {
+          name: "GitHub Address Code Search",
+          status: "empty",
+          cache: cacheStates.every((cache) => cache === "hit") ? "hit" : "miss",
+          message: `No GitHub code matches found for ${addresses.length} contract address${addresses.length === 1 ? "" : "es"}.`
+        }
+      };
+    }
+
+    return {
+      artifact: normalizeArtifact({
+        type: "github_code_search",
+        title: `GitHub code mentions for ${addresses.length === 1 ? addresses[0] : `${addresses.length} contract addresses`}`,
+        url: githubCodeSearchUrl(addresses),
+        status: "candidate",
+        summary: `Found ${matches.length} GitHub code result${matches.length === 1 ? "" : "s"} mentioning the provided contract address${addresses.length === 1 ? "" : "es"}. Treat these as repository candidates until official project surfaces confirm them.`,
+        excerpts: matches.slice(0, 5).map((match) => `${match.repository}: ${match.path} mentions ${match.address}`),
+        facts: {
+          provider: "github_code_search",
+          addressCount: addresses.length,
+          searchedAddresses: addresses,
+          totalMatches: results.reduce((sum, result) => sum + result.totalCount, 0),
+          matches
+        },
+        addresses,
+        links: matches.map((match) => ({
+          type: "repo",
+          label: match.repository,
+          url: match.repositoryUrl || match.url
+        }))
+      }),
+      source: {
+        name: "GitHub Address Code Search",
+        status: "candidate",
+        cache: cacheStates.every((cache) => cache === "hit") ? "hit" : "miss",
+        url: githubCodeSearchUrl(addresses)
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: null,
+      source: {
+        name: "GitHub Address Code Search",
+        status: "error",
+        message: error.message
+      }
+    };
+  }
+}
+
+function normalizeGitHubAddressSearch(address, raw) {
+  const items = Array.isArray(raw?.items) ? raw.items : [];
+  return {
+    address,
+    totalCount: Number(raw?.total_count || 0),
+    matches: items.map((item) => ({
+      address,
+      name: item.name || null,
+      path: item.path || item.name || "unknown file",
+      url: item.html_url || null,
+      repository: item.repository?.full_name || "unknown repository",
+      repositoryUrl: item.repository?.html_url || null,
+      score: Number(item.score || 0)
+    })).filter((item) => item.url || item.repositoryUrl)
+  };
+}
+
+function uniqueGitHubCodeMatches(matches) {
+  const seen = new Set();
+  return matches.filter((match) => {
+    const key = match.url || `${match.repository}:${match.path}:${match.address}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, MAX_GITHUB_ADDRESS_SEARCHES * MAX_GITHUB_ADDRESS_RESULTS);
+}
+
+function githubCodeSearchUrl(addresses) {
+  const query = addresses.length === 1
+    ? `"${addresses[0]}" in:file`
+    : addresses.map((address) => `"${address}"`).join(" OR ");
+  return `https://github.com/search?q=${encodeURIComponent(query)}&type=code`;
+}
+
 async function collectXapiSearchEvidence(name) {
   const query = meaningfulName(name);
   if (!query) return { artifact: null, source: null };
@@ -475,6 +607,113 @@ async function collectXapiSearchEvidence(name) {
       source: { name: "xAPI Search", status: "error", message: error.message }
     };
   }
+}
+
+async function collectOpenAIWebResearchEvidence({ seed, project }) {
+  const query = webResearchQuery(seed, project);
+  if (!query) {
+    return {
+      artifact: null,
+      source: { name: "OpenAI-compatible Web Search", status: "empty", message: "No project name available for OpenAI-compatible web search" }
+    };
+  }
+
+  const result = await requestWebResearchAI({
+    query,
+    project: {
+      name: project?.name || seed?.name || query,
+      website: project?.website || seed?.website || null,
+      primaryChain: project?.primaryChain?.label || null,
+      contracts: project?.contracts || []
+    },
+    addresses: seed?.addresses || []
+  });
+  const results = normalizeOpenAIWebResults(result.payload);
+
+  if (!results.length) {
+    return {
+      artifact: null,
+      source: {
+        name: "OpenAI-compatible Web Search",
+        status: result.status,
+        message: result.message || "OpenAI-compatible web search did not return usable public project surfaces."
+      }
+    };
+  }
+
+  return {
+    artifact: normalizeArtifact({
+      type: "web_search",
+      title: `OpenAI web research for ${query}`,
+      url: `${openAIWebSearchSourceUrl()}#${slugify(query)}`,
+      status: results.some((item) => item.official) ? "ok" : "candidate",
+      summary: result.payload?.summary || `OpenAI web search returned ${results.length} candidate public project surfaces for ${query}.`,
+      excerpts: results.map((item) => `${item.title || item.url}: ${item.snippet || ""}`),
+      facts: {
+        provider: "openai_compatible_chat_completions",
+        model: result.model || process.env.OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_MODEL || null,
+        responseStatus: result.status,
+        responseId: result.raw?.id || null,
+        warnings: Array.isArray(result.payload?.warnings) ? result.payload.warnings : [],
+        results
+      },
+      addresses: unique([
+        ...(Array.isArray(result.payload?.addresses) ? result.payload.addresses : []),
+        ...results.flatMap((item) => extractAddresses(`${item.title} ${item.url} ${item.snippet}`))
+      ]),
+      links: results.map((item) => ({
+        type: item.type,
+        label: item.title || "OpenAI web result",
+        url: item.url
+      }))
+    }),
+    source: {
+      name: "OpenAI-compatible Web Search",
+      status: result.status,
+      message: result.message,
+      url: openAIWebSearchSourceUrl()
+    }
+  };
+}
+
+function openAIWebSearchSourceUrl() {
+  const baseUrl = (process.env.OPENAI_BASE_URL || "https://opencode.ai/zen/go/v1").replace(/\/+$/, "");
+  return `${baseUrl}/chat/completions`;
+}
+
+function normalizeOpenAIWebResults(payload) {
+  if (!Array.isArray(payload?.results)) return [];
+  return payload.results
+    .map((item) => ({
+      title: String(item?.title || "").trim(),
+      url: normalizeEvidenceUrl(item?.url),
+      type: normalizeWebResultType(item?.type),
+      snippet: String(item?.snippet || "").trim().slice(0, 420),
+      official: Boolean(item?.official),
+      confidence: clampNumber(item?.confidence)
+    }))
+    .filter((item) => item.url)
+    .slice(0, 8);
+}
+
+function normalizeWebResultType(type) {
+  return {
+    audit: "audit",
+    docs: "docs",
+    governance: "governance",
+    other: "website",
+    profile: "website",
+    repo: "repo",
+    social: "social",
+    website: "website",
+    whitepaper: "whitepaper"
+  }[String(type || "").toLowerCase()] || "website";
+}
+
+function clampNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0.58;
+  return Math.max(0, Math.min(1, number));
 }
 
 function buildCandidateUrls(seed, project, existingEvidence) {
@@ -536,6 +775,7 @@ function addSurface(surfaces, type, label, url) {
     github_repository: "repos",
     github_profile: "repos",
     github_search: "repos",
+    github_code_search: "repos",
     repo: "repos",
     docs: "docs",
     whitepaper: "whitepapers",
@@ -738,6 +978,43 @@ function shouldSearchByName(seed, project, artifactsByUrl) {
   if ((seed?.addresses || []).length) return false;
   if (artifactsByUrl.size > 0) return false;
   return Boolean(meaningfulName(project?.name || seed?.name || seed?.query));
+}
+
+function collectSearchAddresses(seed, project) {
+  return unique([
+    ...(seed?.addresses || []),
+    ...extractAddresses(seed?.query),
+    ...(project?.contracts || []).map((contract) => contract.address),
+    ...(project?.contracts || []).map((contract) => contract.pairAddress)
+  ].filter(Boolean))
+    .map((address) => String(address).toLowerCase())
+    .filter((address) => /^0x[a-f0-9]{40}$/.test(address))
+    .filter((address) => !isBurnAddress(address));
+}
+
+function shouldUseOpenAIWebResearch(seed, project, artifactsByUrl, xapiSource) {
+  if (process.env.OPENAI_WEB_SEARCH_ENABLED === "0") return false;
+  const query = webResearchQuery(seed, project);
+  if (!query) return false;
+  if (artifactsByUrl.size >= 2 && hasOfficialResearchSurface(artifactsByUrl)) return false;
+  if (!xapiSource) return true;
+  return ["disabled", "empty", "error"].includes(xapiSource.status);
+}
+
+function webResearchQuery(seed, project) {
+  const name = meaningfulName(project?.name || seed?.name || seed?.query);
+  if (name) return name;
+  const address = collectSearchAddresses(seed, project)[0];
+  if (!address) return null;
+  const chain = project?.primaryChain?.label || seed?.chainId || "Ethereum";
+  return `${chain} contract address ${address}`;
+}
+
+function hasOfficialResearchSurface(artifactsByUrl) {
+  return [...artifactsByUrl.values()].some((artifact) => (
+    artifact.status === "ok" &&
+    ["audit", "docs", "github_repository", "governance", "web_page", "whitepaper"].includes(artifact.type)
+  ));
 }
 
 function meaningfulName(value) {

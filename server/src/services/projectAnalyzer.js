@@ -346,6 +346,20 @@ function buildLocalFindings(seed, tokenReports, project, contractProfiles, proje
     }));
   }
 
+  for (const report of tokenReports) {
+    if (report.classification?.assetType !== "non_token_or_unknown") continue;
+    const profile = contractProfiles.find((result) => String(result.address).toLowerCase() === String(report.address).toLowerCase())?.profile;
+    if (profile?.verifiedContract) continue;
+    findings.push(finding({
+      dimension: "asset",
+      title: "Contract identity is unverified across primary sources",
+      severity: "high",
+      confidence: 0.78,
+      evidence: "GoPlus, DEXScreener, CoinGecko, and Sourcify did not return token, market, profile, or verified-source evidence",
+      context: "This is not a scam label, but an unverified contract with no token identity should not receive a high trust score. Add an official surface or verified source before relying on it."
+    }));
+  }
+
   if (hasResearch) {
     findings.push(finding({
       dimension: "data",
@@ -385,6 +399,31 @@ function buildLocalFindings(seed, tokenReports, project, contractProfiles, proje
     }
   }
 
+  const threatMatches = githubThreatIntelMatches(projectEvidence);
+  if (threatMatches.length) {
+    findings.push(finding({
+      dimension: "data",
+      title: "Address appears in public threat or label repositories",
+      severity: "high",
+      confidence: 0.76,
+      evidence: threatMatches.map((match) => `${match.repository}${match.path ? `/${match.path}` : ""}`).slice(0, 4).join("; "),
+      context: "GitHub code search found this exact address in repositories whose names or paths suggest threat intelligence, labels, blacklists, scams, or phishing corpora. Treat this as candidate evidence and verify it manually."
+    }));
+  }
+
+  const publicRiskMatches = publicRiskEvidenceMatches(projectEvidence);
+  if (publicRiskMatches.length) {
+    const critical = publicRiskMatches.some((match) => match.critical);
+    findings.push(finding({
+      dimension: "data",
+      title: "Public web evidence links this address to a known incident or exploit discussion",
+      severity: critical ? "critical" : "high",
+      confidence: critical ? 0.84 : 0.76,
+      evidence: publicRiskMatches.map((match) => `${match.title}: ${match.url}`).slice(0, 4).join("; "),
+      context: "Web research found exact-address references with incident, exploit, killed-contract, selfdestruct, scam, phishing, blacklist, or threat language. This should override a missing token score and trigger manual review."
+    }));
+  }
+
   if (!hasRepo && !hasSocial) {
     findings.push(finding({
       dimension: "community",
@@ -405,11 +444,9 @@ function summarizeProject(findings, tokenReports) {
     .filter(isScoredTokenReport)
     .map((report) => report.summary?.trustScore)
     .filter((score) => Number.isFinite(Number(score)));
-  const averageTokenScore = tokenScores.length
-    ? Math.round(tokenScores.reduce((sum, score) => sum + Number(score), 0) / tokenScores.length)
-    : 82;
-  const penalty = counts.critical * 22 + counts.high * 14 + counts.medium * 7 + counts.low * 2;
-  const projectScore = Math.max(0, Math.min(100, Math.round(averageTokenScore - penalty / 2)));
+  const averageTokenScore = baseProjectScore(tokenScores, tokenReports);
+  const penalty = counts.critical * 32 + counts.high * 18 + counts.medium * 8 + counts.low * 3;
+  const projectScore = Math.max(0, Math.min(100, Math.round(averageTokenScore - penalty)));
 
   let label = "No Major Signals";
   let level = "low";
@@ -432,6 +469,52 @@ function summarizeProject(findings, tokenReports) {
     counts,
     tokenCount: tokenReports.length
   };
+}
+
+function baseProjectScore(tokenScores, tokenReports) {
+  if (tokenScores.length) {
+    return Math.round(tokenScores.reduce((sum, score) => sum + Number(score), 0) / tokenScores.length);
+  }
+
+  if (!tokenReports.length) return 62;
+
+  const unknownCount = tokenReports.filter((report) => report.classification?.assetType === "non_token_or_unknown").length;
+  if (unknownCount === tokenReports.length) return 58;
+  if (unknownCount > 0) return 64;
+  return 72;
+}
+
+function githubThreatIntelMatches(projectEvidence) {
+  return (projectEvidence?.artifacts || [])
+    .filter((artifact) => artifact.type === "github_code_search")
+    .flatMap((artifact) => artifact.facts?.matches || [])
+    .filter((match) => isThreatIntelText(`${match.repository} ${match.path} ${match.url}`));
+}
+
+function publicRiskEvidenceMatches(projectEvidence) {
+  return (projectEvidence?.artifacts || [])
+    .flatMap((artifact) => {
+      const results = Array.isArray(artifact.facts?.results) ? artifact.facts.results : [];
+      return results.map((result) => ({
+        title: result.title || artifact.title || "Public evidence",
+        url: result.url || artifact.url,
+        text: `${result.title || ""} ${result.url || ""} ${result.snippet || ""} ${artifact.summary || ""}`,
+        critical: isCriticalIncidentText(`${result.title || ""} ${result.url || ""} ${result.snippet || ""}`)
+      }));
+    })
+    .filter((match) => match.url && isPublicRiskText(match.text));
+}
+
+function isThreatIntelText(text) {
+  return /\b(threat|intelligence|blacklist|blocklist|scam|phish|phishing|malware|exploit|abuse|compromise|stolen|drainer|label|sanction)\b/i.test(text);
+}
+
+function isPublicRiskText(text) {
+  return /\b(hack|exploit|vulnerability|killed|selfdestruct|self-destruct|blacklist|blocklist|scam|phish|phishing|threat|malware|drainer|stolen|compromised|incident|parity bug|restore contract code|anyone can kill)\b/i.test(text);
+}
+
+function isCriticalIncidentText(text) {
+  return /\b(killed|selfdestruct|self-destruct|parity bug|restore contract code|anyone can kill|exploit|hack|compromised|drainer|stolen)\b/i.test(text);
 }
 
 function buildSummaryActions({ summary, recommendations = [], findings = [] }) {

@@ -26,16 +26,20 @@ function buildResearchAgent({ projectEvidence, localFindings = [], project }) {
   const artifacts = projectEvidence?.artifacts || [];
   const surfaces = projectEvidence?.surfaces || {};
   const surfaceCount = Object.values(surfaces).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
-  const findings = localFindings
-    .filter((finding) => ["identity", "data", "community"].includes(finding.dimension))
-    .slice(0, 5);
+  const candidateCount = artifacts.filter(isCandidateArtifact).length;
+  const findings = buildResearchFindings({
+    artifacts,
+    surfaces,
+    sources: projectEvidence?.sources || [],
+    localFindings
+  });
 
   return normalizeAgent({
     id: "research-agent",
     name: "Research Agent",
     status: normalizeStatus(projectEvidence?.status, artifacts.length ? "ok" : "partial"),
     summary: artifacts.length
-      ? `Collected ${artifacts.length} evidence artifact${artifacts.length === 1 ? "" : "s"} across ${surfaceCount} project surface${surfaceCount === 1 ? "" : "s"}.`
+      ? `Collected ${artifacts.length} evidence artifact${artifacts.length === 1 ? "" : "s"} across ${surfaceCount} project surface${surfaceCount === 1 ? "" : "s"}${candidateCount ? `; ${candidateCount} candidate artifact${candidateCount === 1 ? " still needs" : "s still need"} official binding` : ""}.`
       : "No official project evidence was collected yet; project identity remains thin.",
     confidence: artifacts.length ? 0.78 : 0.48,
     findings,
@@ -51,6 +55,129 @@ function buildResearchAgent({ projectEvidence, localFindings = [], project }) {
       })).slice(0, 8)
     }
   });
+}
+
+function buildResearchFindings({ artifacts = [], surfaces = {}, sources = [], localFindings = [] }) {
+  const findings = [];
+  const evidenceGapFindings = localFindings
+    .filter((finding) => ["identity", "data", "community"].includes(finding.dimension))
+    .slice(0, artifacts.length ? 2 : 5);
+
+  findings.push(...evidenceGapFindings);
+
+  for (const artifact of artifacts.slice(0, 5)) {
+    findings.push(agentFinding({
+      dimension: dimensionForArtifact(artifact),
+      title: titleForArtifactFinding(artifact),
+      severity: severityForArtifact(artifact),
+      confidence: confidenceForArtifact(artifact),
+      evidence: artifact.url || artifact.title,
+      context: artifact.summary || artifact.excerpts?.[0] || "Collected public project evidence for manual review."
+    }));
+  }
+
+  const surfaceFindings = buildSurfaceFindings(surfaces);
+  findings.push(...surfaceFindings);
+
+  for (const source of sources.filter((item) => ["error", "disabled", "empty"].includes(item.status)).slice(0, artifacts.length ? 1 : 3)) {
+    findings.push(agentFinding({
+      dimension: "data",
+      title: `${source.name || "Research source"} returned ${source.status}`,
+      severity: source.status === "error" ? "low" : "info",
+      confidence: 0.64,
+      evidence: source.url || source.message || source.status,
+      context: source.message || "Research collection continued with the remaining available sources."
+    }));
+  }
+
+  if (!findings.length) {
+    findings.push(agentFinding({
+      dimension: "data",
+      title: "Project research surface remains incomplete",
+      severity: "low",
+      confidence: 0.58,
+      evidence: "No website, docs, GitHub, whitepaper, audit, governance, or search evidence was fetched",
+      context: "Provide an official URL or enable a search provider so the research step can bind public evidence to this project."
+    }));
+  }
+
+  return orderFindings(dedupeFindings(findings)).slice(0, 8);
+}
+
+function buildSurfaceFindings(surfaces = {}) {
+  return [
+    surfaceFinding("repos", "Repository surfaces were discovered", "community", surfaces),
+    surfaceFinding("audits", "Audit surfaces were discovered", "technical", surfaces),
+    surfaceFinding("governance", "Governance surfaces were discovered", "governance", surfaces),
+    surfaceFinding("docs", "Documentation surfaces were discovered", "identity", surfaces)
+  ].filter(Boolean).slice(0, 3);
+}
+
+function surfaceFinding(key, title, dimension, surfaces) {
+  const items = Array.isArray(surfaces[key]) ? surfaces[key] : [];
+  if (!items.length) return null;
+  const sample = items.slice(0, 3).map((item) => item.label || item.url).join(", ");
+  return agentFinding({
+    dimension,
+    title,
+    severity: "info",
+    confidence: 0.7,
+    evidence: `${items.length} ${key} surface${items.length === 1 ? "" : "s"}: ${sample}`,
+    context: "These surfaces were collected as research inputs and should be checked for official project binding."
+  });
+}
+
+function titleForArtifactFinding(artifact) {
+  if (isCandidateArtifact(artifact)) return `${labelForArtifactType(artifact.type)} candidates need verification`;
+  if (artifact.status === "needs_review") return `${labelForArtifactType(artifact.type)} needs review`;
+  if (artifact.status === "unreadable") return `${labelForArtifactType(artifact.type)} was found but not fully readable`;
+  return `${labelForArtifactType(artifact.type)} evidence collected`;
+}
+
+function labelForArtifactType(type) {
+  return {
+    audit: "Audit",
+    docs: "Documentation",
+    github_code_search: "GitHub code search",
+    github_profile: "GitHub profile",
+    github_repository: "GitHub repository",
+    github_search: "GitHub search",
+    governance: "Governance",
+    web_page: "Website",
+    web_search: "Web search",
+    whitepaper: "Whitepaper"
+  }[type] || "Project";
+}
+
+function dimensionForArtifact(artifact) {
+  return {
+    audit: "technical",
+    docs: "identity",
+    github_code_search: "technical",
+    github_profile: "community",
+    github_repository: "community",
+    github_search: "community",
+    governance: "governance",
+    web_page: "identity",
+    web_search: "data",
+    whitepaper: "identity"
+  }[artifact.type] || "data";
+}
+
+function severityForArtifact(artifact) {
+  if (artifact.status === "needs_review" || artifact.status === "unreadable") return "low";
+  if (isCandidateArtifact(artifact)) return "low";
+  return "info";
+}
+
+function confidenceForArtifact(artifact) {
+  if (artifact.status === "ok") return 0.78;
+  if (isCandidateArtifact(artifact)) return 0.58;
+  return 0.64;
+}
+
+function isCandidateArtifact(artifact) {
+  return artifact?.status === "candidate" || artifact?.type === "github_search" || artifact?.type === "github_code_search";
 }
 
 function buildOpenSourceReviewAgent({ project, projectEvidence, contractProfiles = [] }) {
@@ -505,6 +632,16 @@ function summarizeFindings(findings) {
 
 function orderFindings(findings) {
   return [...findings].sort((left, right) => severityWeight(right.severity) - severityWeight(left.severity));
+}
+
+function dedupeFindings(findings) {
+  const seen = new Set();
+  return findings.filter((finding) => {
+    const key = slugify(`${finding.dimension}-${finding.title}-${finding.evidence}`);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function severityWeight(severity) {
