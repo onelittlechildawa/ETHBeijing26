@@ -30,43 +30,14 @@ import { analyzeProject } from "./api.js";
 import { analyzeWalletExposure, connectWallet, hasWalletProvider } from "./wallet.js";
 import "./styles.css";
 
-const examples = [
-  {
-    label: "Uniswap",
-    query: "Uniswap 0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
-    chainId: "1",
-    address: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
-  },
-  {
-    label: "Aave",
-    query: "Aave aave.com 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9",
-    chainId: "1",
-    address: "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
-  },
-  {
-    label: "PEPE",
-    query: "Pepe 0x6982508145454ce325ddbe47a25d4ec3d2311933",
-    chainId: "1",
-    address: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
-  },
-  {
-    label: "USDC",
-    query: "USDC circle.com 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-    chainId: "1",
-    address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-  },
-  {
-    label: "Risk lab",
-    query: "ChainLens Risk Lab 0xfeed00000000000000000000000000000000feed",
-    chainId: "1",
-    address: "0xfeed00000000000000000000000000000000feed"
-  }
-];
+const DEFAULT_CHAIN_ID = "1";
 
-const chains = [
-  { id: "1", label: "Ethereum" },
-  { id: "56", label: "BNB Chain" },
-  { id: "8453", label: "Base" }
+const ANALYSIS_PROGRESS_STAGES = [
+  { key: "scope", labelKey: "progressScope", startMs: 0, percent: 12 },
+  { key: "contracts", labelKey: "progressContracts", startMs: 2500, percent: 28 },
+  { key: "evidence", labelKey: "progressEvidence", startMs: 6500, percent: 48 },
+  { key: "ai", labelKey: "progressAi", startMs: 11000, percent: 68 },
+  { key: "report", labelKey: "progressReport", startMs: 17000, percent: 86 }
 ];
 
 const STORAGE_KEYS = {
@@ -77,13 +48,13 @@ const MAX_HISTORY_ITEMS = 10;
 
 const messages = {
   en: {
-    appTitle: "Project risk investigation console",
+    appTitle: "Project risk investigation",
     modelEyebrow: "Investigation model",
     network: "Network",
     queryLabel: "Project, website, or contract evidence",
-    queryPlaceholder: "Project name, website, 0x contract...",
-    investigating: "Investigating",
-    analyzeProject: "Analyze Project",
+    queryPlaceholder: "Project, site, or 0x address",
+    investigating: "Analyzing",
+    analyzeProject: "Analyze",
     languageToggle: "中文",
     languageToggleLabel: "Switch to Chinese",
     readyTitle: "Ready for analysis",
@@ -116,9 +87,17 @@ const messages = {
     research: "Research",
     researchItems: "{count} item{plural}",
     findings: "Findings",
-    coordinatedDiligence: "Coordinated diligence",
-    agentCrew: "AI Agent Crew",
+    coordinatedDiligence: "Coordinated Diligence",
+    agentCrew: "Agent Review",
     agentsCount: "{count} agent{plural}",
+    analysisProgress: "Analysis progress",
+    progressElapsed: "{seconds}s elapsed",
+    progressScope: "Resolving scope",
+    progressContracts: "Checking contracts",
+    progressEvidence: "Collecting evidence",
+    progressAi: "Reviewing findings",
+    progressReport: "Assembling report",
+    queryRequired: "Enter a project, website, or contract address.",
     dimensionHealth: "Dimension health",
     projectFindings: "Project findings",
     found: "{count} found",
@@ -192,13 +171,13 @@ const messages = {
     tokenReports: "Token reports"
   },
   zh: {
-    appTitle: "项目风险调查控制台",
+    appTitle: "项目风险调查",
     modelEyebrow: "调查模型",
     network: "网络",
     queryLabel: "项目、官网或合约证据",
-    queryPlaceholder: "项目名、官网、0x 合约地址...",
-    investigating: "调查中",
-    analyzeProject: "分析项目",
+    queryPlaceholder: "项目、官网或 0x 合约地址...",
+    investigating: "分析中",
+    analyzeProject: "分析",
     languageToggle: "EN",
     languageToggleLabel: "切换到英文",
     readyTitle: "等待分析",
@@ -232,8 +211,16 @@ const messages = {
     researchItems: "{count} 条",
     findings: "风险发现",
     coordinatedDiligence: "协同尽调",
-    agentCrew: "AI Agent 组",
+    agentCrew: "Agent 复核",
     agentsCount: "{count} 个 agent",
+    analysisProgress: "分析进度",
+    progressElapsed: "已用 {seconds} 秒",
+    progressScope: "解析项目范围",
+    progressContracts: "检查合约",
+    progressEvidence: "收集证据",
+    progressAi: "复核发现",
+    progressReport: "生成报告",
+    queryRequired: "请输入项目、官网或合约地址。",
     dimensionHealth: "维度健康度",
     projectFindings: "项目发现",
     found: "发现 {count} 条",
@@ -314,9 +301,11 @@ let state = {
   report: null,
   locale: loadLocale(),
   history: loadHistory(),
-  chainId: "1",
-  query: examples[0].query,
-  address: examples[0].address,
+  chainId: DEFAULT_CHAIN_ID,
+  query: "",
+  address: "",
+  analysisStartedAt: null,
+  progressTick: 0,
   wallet: {
     provider: null,
     account: null,
@@ -329,6 +318,7 @@ let state = {
 
 let radarChart = null;
 let boundWalletProvider = null;
+let progressTimer = null;
 
 const app = document.querySelector("#app");
 
@@ -338,41 +328,38 @@ function render() {
   app.innerHTML = `
     <main class="shell">
       <section class="command-panel">
-        <div class="brand-row">
-          <div class="brand-cluster">
-            <div class="brand-mark">${icon(ShieldAlert)}</div>
-            <div>
-              <p class="eyebrow">ChainLens</p>
-              <h1>${t("appTitle")}</h1>
+        <div class="command-layout">
+          <div class="search-column">
+            <div class="brand-row">
+              <div class="brand-cluster">
+                <div class="brand-mark">${icon(ShieldAlert)}</div>
+                <div>
+                  <p class="eyebrow">ChainLens</p>
+                  <h1>${t("appTitle")}</h1>
+                </div>
+              </div>
+              <button id="language-toggle" class="icon-action language-toggle" type="button" title="${t("languageToggleLabel")}" aria-label="${t("languageToggleLabel")}">
+                ${icon(Languages)}
+                <span>${t("languageToggle")}</span>
+              </button>
             </div>
+            <form id="analyze-form" class="search-panel">
+              <label class="search-field address-field">
+                <span class="sr-only">${t("queryLabel")}</span>
+                <span class="search-leading">${icon(Search)}</span>
+                <input id="query-input" value="${escapeHtml(state.query)}" placeholder="${t("queryPlaceholder")}" spellcheck="false" autocomplete="off" ${state.loading ? "disabled" : ""} />
+              </label>
+              <button class="primary-action" type="submit" ${state.loading ? "disabled" : ""}>
+                ${state.loading ? icon(Loader2, "spin") : icon(Search)}
+                <span>${state.loading ? t("investigating") : t("analyzeProject")}</span>
+              </button>
+            </form>
+            ${state.loading ? analysisProgressTemplate() : ""}
+            ${state.error ? `<div class="error-banner">${icon(AlertTriangle)}<span>${escapeHtml(state.error)}</span></div>` : ""}
           </div>
-          <button id="language-toggle" class="icon-action language-toggle" type="button" title="${t("languageToggleLabel")}" aria-label="${t("languageToggleLabel")}">
-            ${icon(Languages)}
-            <span>${t("languageToggle")}</span>
-          </button>
+          ${historyTemplate()}
         </div>
-        <form id="analyze-form" class="search-panel">
-          <label class="field">
-            <span>${t("network")}</span>
-            <select id="chain-select">
-              ${chains.map((chain) => `<option value="${chain.id}" ${chain.id === state.chainId ? "selected" : ""}>${chain.label}</option>`).join("")}
-            </select>
-          </label>
-          <label class="field address-field">
-            <span>${t("queryLabel")}</span>
-            <input id="query-input" value="${escapeHtml(state.query)}" placeholder="${t("queryPlaceholder")}" spellcheck="false" />
-          </label>
-          <button class="primary-action" type="submit" ${state.loading ? "disabled" : ""}>
-            ${state.loading ? icon(Loader2, "spin") : icon(Search)}
-            <span>${state.loading ? t("investigating") : t("analyzeProject")}</span>
-          </button>
-        </form>
-        <div class="example-row">
-          ${examples.map((item) => `<button class="example-chip" data-query="${escapeHtml(item.query)}" data-address="${item.address}" data-chain="${item.chainId}">${item.label}</button>`).join("")}
-        </div>
-        ${state.error ? `<div class="error-banner">${icon(AlertTriangle)}<span>${escapeHtml(state.error)}</span></div>` : ""}
       </section>
-      ${historyTemplate()}
       ${state.report ? reportTemplate(state.report) : emptyTemplate()}
       ${walletPanelTemplate(state.report, state.wallet)}
     </main>
@@ -393,18 +380,8 @@ function bindEvents() {
   document.querySelector("#analyze-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     runAnalysis({
-      chainId: document.querySelector("#chain-select").value,
+      chainId: state.chainId || DEFAULT_CHAIN_ID,
       query: document.querySelector("#query-input").value.trim()
-    });
-  });
-
-  document.querySelectorAll(".example-chip").forEach((button) => {
-    button.addEventListener("click", () => {
-      runAnalysis({
-        query: button.dataset.query,
-        address: button.dataset.address,
-        chainId: button.dataset.chain
-      });
     });
   });
 
@@ -439,6 +416,12 @@ function bindEvents() {
 }
 
 async function runAnalysis({ chainId, query, address }) {
+  if (!query) {
+    state = { ...state, error: t("queryRequired") };
+    render();
+    return;
+  }
+
   state = {
     ...state,
     loading: true,
@@ -447,25 +430,30 @@ async function runAnalysis({ chainId, query, address }) {
     chainId,
     query,
     address,
+    analysisStartedAt: Date.now(),
+    progressTick: 0,
     wallet: {
       ...state.wallet,
       exposure: null,
       error: null
     }
   };
+  startAnalysisTicker();
   render();
 
   try {
     const report = await analyzeProject({ chainId, query, address });
     const history = rememberReport(report, { query, chainId, address });
-    state = { ...state, loading: false, report, history };
+    stopAnalysisTicker();
+    state = { ...state, loading: false, report, history, analysisStartedAt: null, progressTick: 0 };
     render();
 
     if (state.wallet.provider && state.wallet.account) {
       await runWalletExposure(report);
     }
   } catch (error) {
-    state = { ...state, loading: false, error: error.message };
+    stopAnalysisTicker();
+    state = { ...state, loading: false, error: error.message, analysisStartedAt: null, progressTick: 0 };
     render();
   }
 }
@@ -610,16 +598,14 @@ function emptyTemplate() {
 
 function historyTemplate() {
   const items = state.history || [];
+  const disabled = state.loading ? "disabled" : "";
   return `
-    <section class="history-panel" aria-label="${t("historyTitle")}">
-      <div class="panel-heading compact">
-        <div>
-          <p class="eyebrow">${t("historyEyebrow")}</p>
-          <h2>${t("historyTitle")}</h2>
-        </div>
+    <aside class="history-rail" aria-label="${t("historyTitle")}">
+      <div class="history-rail-heading">
+        <h2>${t("historyTitle")}</h2>
         <div class="history-meta">
           <span>${t("historySaved", { count: items.length })}</span>
-          ${items.length ? `<button id="history-clear" class="icon-action" type="button" title="${t("historyClear")}" aria-label="${t("historyClear")}">${icon(Trash2)}<span>${t("historyClear")}</span></button>` : ""}
+          ${items.length ? `<button id="history-clear" class="icon-action compact-action" type="button" title="${t("historyClear")}" aria-label="${t("historyClear")}" ${disabled}>${icon(Trash2)}</button>` : ""}
         </div>
       </div>
       ${items.length ? `
@@ -627,14 +613,15 @@ function historyTemplate() {
           ${items.map(historyItemTemplate).join("")}
         </div>
       ` : `<div class="history-empty">${icon(History)} <span>${t("historyEmpty")}</span></div>`}
-    </section>
+    </aside>
   `;
 }
 
 function historyItemTemplate(item) {
+  const disabled = state.loading ? "disabled" : "";
   return `
     <article class="history-row">
-      <button class="history-load" type="button" data-history-load="${escapeHtml(item.id)}" title="${t("historyLoad")}" aria-label="${t("historyLoad")}">
+      <button class="history-load" type="button" data-history-load="${escapeHtml(item.id)}" title="${t("historyLoad")}" aria-label="${t("historyLoad")}" ${disabled}>
         <strong>${escapeHtml(item.name || "ChainLens report")}</strong>
         <span>${escapeHtml(formatDateTime(item.generatedAt))} / ${escapeHtml(localizeSummaryLabel(item.levelLabel || item.level))} / ${formatNumber(item.findingCount || 0)} ${t("findings").toLowerCase()}</span>
       </button>
@@ -642,11 +629,76 @@ function historyItemTemplate(item) {
         <strong>${formatNumber(item.score)}</strong>
         <span>${t("historyScore")}</span>
       </div>
-      <button class="icon-action danger" type="button" data-history-delete="${escapeHtml(item.id)}" title="${t("historyDelete")}" aria-label="${t("historyDelete")}">
+      <button class="icon-action danger" type="button" data-history-delete="${escapeHtml(item.id)}" title="${t("historyDelete")}" aria-label="${t("historyDelete")}" ${disabled}>
         ${icon(Trash2)}
       </button>
     </article>
   `;
+}
+
+function analysisProgressTemplate() {
+  const progress = currentAnalysisProgress();
+  if (!progress) return "";
+
+  return `
+    <div class="analysis-progress" role="status" aria-live="polite">
+      <div class="progress-topline">
+        <span>${icon(Loader2, "spin")} <strong>${t("analysisProgress")}</strong></span>
+        <span>${t("progressElapsed", { seconds: progress.seconds })}</span>
+      </div>
+      <div class="progress-track" aria-hidden="true">
+        <span style="width: ${progress.percent}%"></span>
+      </div>
+      <ol class="progress-steps">
+        ${ANALYSIS_PROGRESS_STAGES.map((stage, index) => `
+          <li class="${index < progress.index ? "complete" : index === progress.index ? "current" : ""}">
+            <span></span>
+            <strong>${t(stage.labelKey)}</strong>
+          </li>
+        `).join("")}
+      </ol>
+    </div>
+  `;
+}
+
+function currentAnalysisProgress() {
+  if (!state.loading || !state.analysisStartedAt) return null;
+  const elapsed = Math.max(0, Date.now() - state.analysisStartedAt);
+  let stageIndex = 0;
+  for (let index = 0; index < ANALYSIS_PROGRESS_STAGES.length; index += 1) {
+    if (elapsed >= ANALYSIS_PROGRESS_STAGES[index].startMs) stageIndex = index;
+  }
+  const stage = ANALYSIS_PROGRESS_STAGES[stageIndex];
+  const nextStage = ANALYSIS_PROGRESS_STAGES[stageIndex + 1];
+  const nextStart = nextStage?.startMs ?? stage.startMs + 12000;
+  const nextPercent = nextStage ? nextStage.percent - 2 : 94;
+  const interval = Math.max(1, nextStart - stage.startMs);
+  const localProgress = Math.min(1, (elapsed - stage.startMs) / interval);
+  const percent = Math.round(stage.percent + (nextPercent - stage.percent) * localProgress);
+
+  return {
+    index: stageIndex,
+    percent: Math.min(94, Math.max(8, percent)),
+    seconds: Math.floor(elapsed / 1000)
+  };
+}
+
+function startAnalysisTicker() {
+  stopAnalysisTicker();
+  progressTimer = window.setInterval(() => {
+    if (!state.loading) {
+      stopAnalysisTicker();
+      return;
+    }
+    state = { ...state, progressTick: state.progressTick + 1 };
+    render();
+  }, 1000);
+}
+
+function stopAnalysisTicker() {
+  if (!progressTimer) return;
+  window.clearInterval(progressTimer);
+  progressTimer = null;
 }
 
 function reportTemplate(report) {
