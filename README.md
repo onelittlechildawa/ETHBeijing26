@@ -30,10 +30,10 @@ Optional search and repository credentials:
 ```bash
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
-XAPI_SEARCH_URL=optional_full_xapi_search_endpoint
+XAPI_SEARCH_ACTION=web.search
 ```
 
-Without xAPI, ChainLens still fetches user-provided websites, GitHub links, and PDF whitepapers. `XAPI_*` is only used as an external web-search connector when both `XAPI_API_KEY` and `XAPI_SEARCH_URL` are configured.
+Without xAPI, ChainLens still fetches user-provided websites, GitHub links, and PDF whitepapers. Set `XAPI_KEY` or `XAPI_API_KEY` to enable xAPI web search through `action.xapi.to` using `XAPI_SEARCH_ACTION` (defaults to `web.search`). `XAPI_SEARCH_URL` is still supported for legacy xapi.to-compatible endpoints.
 
 ## Vercel Deployment
 
@@ -60,7 +60,7 @@ Optional:
 ```bash
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
-XAPI_SEARCH_URL=optional_full_xapi_search_endpoint
+XAPI_SEARCH_ACTION=web.search
 ```
 
 Do not create `VITE_*` copies of server credentials. In production, the client calls the API on the same origin, so `VITE_API_BASE` is usually unnecessary. If a real API key was ever shared outside your machine, rotate it before adding it to Vercel.
@@ -190,10 +190,10 @@ OpenAI 兼容凭证仅用于综合评测。ChainLens 在分析步骤之前会自
 ```bash
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
-XAPI_SEARCH_URL=optional_full_xapi_search_endpoint
+XAPI_SEARCH_ACTION=web.search
 ```
 
-即使没有 xAPI，ChainLens 仍会抓取用户提供的网站、GitHub 链接和 PDF 白皮书。`XAPI_*` 仅在同时配置了 `XAPI_API_KEY` 和 `XAPI_SEARCH_URL` 时用作外部网页搜索连接器。
+即使没有 xAPI，ChainLens 仍会抓取用户提供的网站、GitHub 链接和 PDF 白皮书。设置 `XAPI_KEY` 或 `XAPI_API_KEY` 后，后端会默认通过 `action.xapi.to` 的 `web.search` 做外部网页搜索；`XAPI_SEARCH_URL` 仅用于兼容旧版 xapi.to 端点。
 
 ## Vercel 部署
 
@@ -220,7 +220,7 @@ OPENAI_TIMEOUT_MS=90000
 ```bash
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
-XAPI_SEARCH_URL=optional_full_xapi_search_endpoint
+XAPI_SEARCH_ACTION=web.search
 ```
 
 不要为服务端凭证创建 `VITE_*` 副本。生产环境中，客户端通过同源调用 API，因此通常不需要 `VITE_API_BASE`。如果真实的 API 密钥曾在你的机器之外泄露，请在添加到 Vercel 之前轮换密钥。
