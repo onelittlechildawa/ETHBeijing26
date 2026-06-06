@@ -1,4 +1,5 @@
 import { analyzeToken } from "./analyzer.js";
+import { extractAgentRecommendations, runAgentOrchestrator } from "./agentOrchestrator.js";
 import { SUPPORTED_CHAINS, getChain } from "./chains.js";
 import { fetchContractProfiles } from "./contractSearch.js";
 import { requestProjectOpenAI } from "./openai.js";
@@ -32,12 +33,27 @@ export async function analyzeProject(input) {
   const adjudicated = adjudicateFindings(localFindings, openai.findingReviews);
   const summary = summarizeProject(adjudicated.activeFindings, tokenReports);
   const dimensions = buildProjectDimensions(adjudicated.activeFindings, tokenReports);
+  const agents = await buildAgents({
+    project,
+    tokenReports,
+    localFindings,
+    findings: adjudicated.activeFindings,
+    suppressedFindings: adjudicated.suppressedFindings,
+    summary,
+    dimensions,
+    openai,
+    projectEvidence,
+    contractProfiles
+  });
+  const recommendations = extractAgentRecommendations(agents);
 
   return {
     generatedAt: new Date().toISOString(),
     project,
     summary,
     dimensions,
+    agents,
+    recommendations,
     findings: adjudicated.activeFindings,
     suppressedFindings: adjudicated.suppressedFindings,
     tokenReports,
@@ -50,8 +66,34 @@ export async function analyzeProject(input) {
     },
     projectEvidence,
     contractProfiles,
-    sources: buildSources(tokenReports, contractProfiles, openai, projectEvidence)
+    sources: buildSources(tokenReports, contractProfiles, openai, projectEvidence, agents)
   };
+}
+
+async function buildAgents(context) {
+  try {
+    return await runAgentOrchestrator(context);
+  } catch (error) {
+    return [
+      {
+        id: "agent-orchestrator",
+        name: "AI Agent Orchestrator",
+        status: "error",
+        summary: "Agent orchestration failed; deterministic report fields are still available.",
+        confidence: 0.3,
+        findings: [],
+        recommendations: [],
+        evidenceCount: 0,
+        sources: [
+          {
+            name: "AI Agent Orchestrator",
+            status: "error",
+            message: error.message
+          }
+        ]
+      }
+    ];
+  }
 }
 
 async function analyzeSeedTargets(seed) {
@@ -413,10 +455,15 @@ function isScoredTokenReport(report) {
   return !isTokenModelExcluded(report.classification) && Number.isFinite(Number(report.summary?.trustScore));
 }
 
-function buildSources(tokenReports, contractProfiles, openai, projectEvidence) {
+function buildSources(tokenReports, contractProfiles, openai, projectEvidence, agents = []) {
   const tokenSources = tokenReports.flatMap((report) => report.sources || []);
   const contractSources = contractProfiles.flatMap((result) => result.sources || [result.source]).filter(Boolean);
   const evidenceSources = projectEvidence?.sources || [];
+  const agentStatus = agents.some((agent) => agent.status === "error")
+    ? "error"
+    : agents.some((agent) => agent.status === "partial" || agent.status === "not_configured")
+      ? "partial"
+      : "ok";
   return [
     ...tokenSources,
     ...contractSources,
@@ -426,6 +473,11 @@ function buildSources(tokenReports, contractProfiles, openai, projectEvidence) {
       status: openai.status,
       cache: openai.status === "not_configured" ? "disabled" : undefined,
       message: openai.message
+    },
+    {
+      name: "AI Agent Orchestrator",
+      status: agentStatus,
+      message: `${agents.length} agent${agents.length === 1 ? "" : "s"} completed`
     }
   ];
 }

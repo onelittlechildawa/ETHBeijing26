@@ -3,7 +3,9 @@ import {
   Activity,
   AlertTriangle,
   BookOpen,
+  Bot,
   CheckCircle2,
+  Code2,
   createElement,
   Database,
   ExternalLink,
@@ -11,10 +13,12 @@ import {
   Gauge,
   Github,
   Layers,
+  Lightbulb,
   Loader2,
   Network,
   Search,
   ShieldAlert,
+  Sparkles,
   Users,
   WalletCards
 } from "lucide";
@@ -361,6 +365,8 @@ function reportTemplate(report) {
         </div>
       </div>
 
+      ${agentCrewTemplate(report)}
+
       <div class="radar-panel">
         <div class="panel-heading compact">
           <h2>Dimension health</h2>
@@ -404,6 +410,7 @@ function reportTemplate(report) {
       ${contractEvidenceTemplate(report)}
       ${suppressedFindingsTemplate(report.suppressedFindings || [])}
       ${analystNotesTemplate(report.openai)}
+      ${recommendationsTemplate(report)}
 
       <div class="sources-panel">
         <div class="panel-heading compact">
@@ -639,6 +646,45 @@ function renderRadar(report) {
   });
 }
 
+function agentCrewTemplate(report) {
+  const agents = report.agents || [];
+  if (!agents.length) return "";
+  return `
+    <div class="agent-panel">
+      <div class="panel-heading compact">
+        <div>
+          <p class="eyebrow">AI Agent Crew</p>
+          <h2>Coordinated diligence</h2>
+        </div>
+        <span>${agents.length} agent${agents.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="agent-grid">
+        ${agents.map(agentCardTemplate).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function agentCardTemplate(agent) {
+  const findings = agent.findings || [];
+  return `
+    <article class="agent-card agent-status-${escapeHtml(agent.status || "partial")}">
+      <div class="agent-card-top">
+        <div class="agent-icon">${icon(iconForAgent(agent.id))}</div>
+        <div>
+          <h3>${escapeHtml(agent.name || "AI Agent")}</h3>
+          <span>${escapeHtml(agent.status || "partial")} · ${formatNumber(agent.evidenceCount || 0)} evidence</span>
+        </div>
+      </div>
+      <p>${escapeHtml(agent.summary || "Agent result pending.")}</p>
+      <div class="agent-meta-row">
+        <strong>${formatNumber(findings.length)} finding${findings.length === 1 ? "" : "s"}</strong>
+        <span>${Math.round((agent.confidence || 0.5) * 100)}% confidence</span>
+      </div>
+    </article>
+  `;
+}
+
 function findingTemplate(signal) {
   return `
     <article class="signal-card severity-${signal.severity}">
@@ -652,6 +698,41 @@ function findingTemplate(signal) {
         <div class="evidence-row">
           <span>${escapeHtml(signal.evidence)}</span>
           <strong>${Math.round(signal.confidence * 100)}% confidence</strong>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function recommendationsTemplate(report) {
+  const recommendations = report.recommendations || recommendationAgent(report)?.recommendations || [];
+  if (!recommendations.length) return "";
+  return `
+    <div class="recommendations-panel">
+      <div class="panel-heading compact">
+        <div>
+          <p class="eyebrow">Recommendation Agent</p>
+          <h2>Next diligence actions</h2>
+        </div>
+        <span>${recommendations.length} action${recommendations.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="recommendation-list">
+        ${recommendations.slice(0, 5).map(recommendationTemplate).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function recommendationTemplate(recommendation) {
+  return `
+    <article class="recommendation-row priority-${escapeHtml(recommendation.priority || "low")}">
+      <div class="recommendation-priority">${escapeHtml(recommendation.priority || "low")}</div>
+      <div class="recommendation-body">
+        <h3>${escapeHtml(recommendation.title)}</h3>
+        <p>${escapeHtml(recommendation.action)}</p>
+        <div class="evidence-row">
+          <span>${escapeHtml(recommendation.reason)}</span>
+          <strong>${escapeHtml(recommendation.evidence || "Evidence attached")}</strong>
         </div>
       </div>
     </article>
@@ -849,6 +930,20 @@ function icon(Icon, extraClass = "") {
 
 function iconForSeverity(severity) {
   return severity === "critical" || severity === "high" ? AlertTriangle : ShieldAlert;
+}
+
+function iconForAgent(id) {
+  return {
+    "research-agent": BookOpen,
+    "open-source-review-agent": Code2,
+    "onchain-risk-agent": Activity,
+    "synthesis-agent": Sparkles,
+    "recommendation-agent": Lightbulb
+  }[id] || Bot;
+}
+
+function recommendationAgent(report) {
+  return (report.agents || []).find((agent) => agent.id === "recommendation-agent");
 }
 
 function openAIStatus(report) {

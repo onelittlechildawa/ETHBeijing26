@@ -5,13 +5,42 @@ const DEFAULT_MODEL = "glm-5.1";
 const VALID_SEVERITIES = new Set(["critical", "high", "medium", "low", "info"]);
 
 export async function requestProjectOpenAI({ project, tokenReports = [], walletExposure = null, localFindings = [], researchEvidence = null }) {
+  const result = await requestStructuredAI({
+    system: buildProjectAnalystInstructions(),
+    payload: {
+      project,
+      tokenReports: summarizeTokenReports(tokenReports),
+      researchEvidence: summarizeResearchEvidence(researchEvidence),
+      walletExposure,
+      localFindings
+    },
+    temperature: 0.2
+  });
+  const normalized = normalizeOpenAIResult(result.payload || result.raw, result.status);
+  return {
+    ...normalized,
+    raw: result.raw ?? normalized.raw,
+    message: result.message
+  };
+}
+
+export async function requestStructuredAI({ system, payload, temperature = 0.2 }) {
   if (process.env.OPENAI_MOCK_RESPONSE) {
-    return normalizeOpenAIResult(JSON.parse(process.env.OPENAI_MOCK_RESPONSE), "mock");
+    const mock = JSON.parse(process.env.OPENAI_MOCK_RESPONSE);
+    return {
+      status: "mock",
+      payload: extractPayload(mock),
+      raw: mock
+    };
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return emptyOpenAIResult("not_configured");
+    return {
+      status: "not_configured",
+      payload: null,
+      raw: null
+    };
   }
 
   try {
@@ -26,48 +55,48 @@ export async function requestProjectOpenAI({ project, tokenReports = [], walletE
       },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
-        temperature: 0.2,
-        messages: buildMessages({ project, tokenReports, walletExposure, localFindings, researchEvidence })
+        temperature,
+        messages: [
+          {
+            role: "system",
+            content: system
+          },
+          {
+            role: "user",
+            content: JSON.stringify(payload)
+          }
+        ]
       })
     });
 
-    return normalizeOpenAIResult(raw, "ok");
+    return {
+      status: "ok",
+      payload: extractPayload(raw),
+      raw
+    };
   } catch (error) {
     return {
-      ...emptyOpenAIResult("error"),
+      status: "error",
+      payload: null,
+      raw: null,
       message: error.message
     };
   }
 }
 
-function buildMessages({ project, tokenReports, walletExposure, localFindings, researchEvidence }) {
+function buildProjectAnalystInstructions() {
   return [
-    {
-      role: "system",
-      content: [
-        "You are ChainLens' project diligence analyst.",
-        "Act as researcher, security analyst, and synthesizer.",
-        "Return JSON only. Do not include markdown.",
-        "Schema: {\"summary\":\"string\",\"findingReviews\":[{\"findingId\":\"string\",\"verdict\":\"valid|false_positive|needs_review\",\"confidence\":0.0,\"reason\":\"string\",\"evidence\":\"string\"}],\"findings\":[{\"dimension\":\"identity|asset|market|governance|community|data|wallet|technical\",\"title\":\"string\",\"severity\":\"critical|high|medium|low|info\",\"confidence\":0.0,\"evidence\":\"string\",\"context\":\"string\"}]}",
-        "Review localFindings for false positives caused by contract type mismatch, such as token holder/liquidity checks on oracle, marketplace, router, proxy, or infrastructure contracts.",
-        "Treat exchanges, custody wallets, bridges, routers, governance treasuries, multisigs, timelocks, and protocol infrastructure as out of scope for ERC-20 token holder/liquidity/tax scoring unless evidence proves the address is the actual project token.",
-        "Mark false_positive only when project metadata, verified contract metadata, ABI, or source evidence contradicts the local finding.",
-        "Use researchEvidence when it is provided, but do not claim you browsed or inspected external surfaces that are absent from researchEvidence.",
-        "Do not emit credential-configuration instructions as project risk findings.",
-        "Separate model-derived findings from deterministic on-chain evidence by explaining evidence sources clearly."
-      ].join(" ")
-    },
-    {
-      role: "user",
-      content: JSON.stringify({
-        project,
-        tokenReports: summarizeTokenReports(tokenReports),
-        researchEvidence: summarizeResearchEvidence(researchEvidence),
-        walletExposure,
-        localFindings
-      })
-    }
-  ];
+    "You are ChainLens' project diligence analyst.",
+    "Act as researcher, security analyst, and synthesizer.",
+    "Return JSON only. Do not include markdown.",
+    "Schema: {\"summary\":\"string\",\"findingReviews\":[{\"findingId\":\"string\",\"verdict\":\"valid|false_positive|needs_review\",\"confidence\":0.0,\"reason\":\"string\",\"evidence\":\"string\"}],\"findings\":[{\"dimension\":\"identity|asset|market|governance|community|data|wallet|technical\",\"title\":\"string\",\"severity\":\"critical|high|medium|low|info\",\"confidence\":0.0,\"evidence\":\"string\",\"context\":\"string\"}]}",
+    "Review localFindings for false positives caused by contract type mismatch, such as token holder/liquidity checks on oracle, marketplace, router, proxy, or infrastructure contracts.",
+    "Treat exchanges, custody wallets, bridges, routers, governance treasuries, multisigs, timelocks, and protocol infrastructure as out of scope for ERC-20 token holder/liquidity/tax scoring unless evidence proves the address is the actual project token.",
+    "Mark false_positive only when project metadata, verified contract metadata, ABI, or source evidence contradicts the local finding.",
+    "Use researchEvidence when it is provided, but do not claim you browsed or inspected external surfaces that are absent from researchEvidence.",
+    "Do not emit credential-configuration instructions as project risk findings.",
+    "Separate model-derived findings from deterministic on-chain evidence by explaining evidence sources clearly."
+  ].join(" ");
 }
 
 function summarizeResearchEvidence(researchEvidence) {
