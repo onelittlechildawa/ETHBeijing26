@@ -59,6 +59,8 @@ button {
 .recommendations-panel,
 .research-panel,
 .wallet-panel,
+.hot-projects-panel,
+.skeptic-panel,
 .detail-card {
   border: 1px solid rgba(148, 163, 184, 0.34);
   background: rgba(255, 255, 255, 0.82);
@@ -69,6 +71,38 @@ button {
 
 .command-panel {
   padding: 22px;
+}
+
+.main-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 0;
+}
+
+.main-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 14px;
+  color: #475569;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.main-tab:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.main-tab.is-active {
+  color: #ffffff;
+  background: #0f172a;
+  border-color: #0f172a;
 }
 
 .brand-row,
@@ -364,55 +398,217 @@ p {
   height: 100%;
   background: #2563eb;
   border-radius: inherit;
-  transition: width 320ms ease;
+  transition: width 180ms ease;
 }
 
-.progress-steps {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
+.progress-stage {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 13px;
 }
 
-.progress-steps li {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.progress-steps li span {
-  width: 8px;
-  height: 8px;
-  background: #cbd5e1;
-  border-radius: 999px;
-}
-
-.progress-steps strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.progress-steps .complete,
-.progress-steps .current {
+.progress-stage strong {
   color: #0f172a;
 }
 
-.progress-steps .complete span {
-  background: #16a34a;
+.progress-stage span {
+  overflow-wrap: anywhere;
 }
 
-.progress-steps .current span {
-  background: #2563eb;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.13);
+.hot-projects-panel {
+  margin-top: 16px;
+  padding: 18px;
+}
+
+.hot-projects-heading {
+  align-items: flex-start;
+}
+
+.hot-projects-heading .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hot-projects-heading p:not(.eyebrow) {
+  margin: 6px 0 0;
+  max-width: 680px;
+  font-size: 14px;
+}
+
+.hot-projects-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hot-projects-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hot-project-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 100%;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  border-radius: 8px;
+}
+
+.hot-project-card.verdict-needs_human_review {
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.hot-project-card.verdict-narrative_outpaces_evidence,
+.hot-project-card.verdict-claims_need_mapping {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+.hot-project-card.verdict-evidence_incomplete {
+  box-shadow: inset 3px 0 0 #0ea5e9;
+}
+
+.hot-project-card.verdict-evidence_backed {
+  box-shadow: inset 3px 0 0 #16a34a;
+}
+
+.hot-project-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hot-project-top > div {
+  min-width: 0;
+}
+
+.hot-rank {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-bottom: 8px;
+  padding: 0 8px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.hot-project-card h3 {
+  margin-bottom: 2px;
+  overflow-wrap: anywhere;
+}
+
+.hot-project-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.hot-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hot-metrics .metric {
+  padding: 10px;
+}
+
+.hot-metrics .metric strong {
+  font-size: 14px;
+}
+
+.hot-verdict {
+  display: grid;
+  gap: 4px;
+}
+
+.hot-verdict strong {
+  font-size: 14px;
+}
+
+.hot-verdict span,
+.hot-review-row,
+.hot-agent-row {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hot-review-row,
+.hot-agent-row {
+  display: grid;
+  gap: 4px;
+}
+
+.hot-agent-row {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.hot-agent-row .icon {
+  color: #64748b;
+  width: 16px;
+  height: 16px;
+}
+
+.hot-question {
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
+  overflow-wrap: anywhere;
+}
+
+.hot-pair-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.hot-pair-link .icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+.hot-projects-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-weight: 800;
+}
+
+.hot-projects-empty.error {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: #fecaca;
 }
 
 .empty-state {
@@ -475,6 +671,7 @@ p {
 
 .score-panel,
 .token-panel,
+.skeptic-panel,
 .radar-panel,
 .signals-panel,
 .asset-panel,
@@ -608,6 +805,10 @@ p {
 
 .token-panel {
   grid-column: span 2;
+}
+
+.skeptic-panel {
+  grid-column: 1 / -1;
 }
 
 .agent-panel {
@@ -787,6 +988,79 @@ p {
   display: block;
   margin-top: 6px;
   font-size: 18px;
+}
+
+.skeptic-panel {
+  border-color: #cbd5e1;
+  background: #ffffff;
+}
+
+.skeptic-panel.verdict-needs_human_review {
+  box-shadow: inset 4px 0 0 #dc2626, 0 18px 48px rgba(15, 23, 42, 0.08);
+}
+
+.skeptic-panel.verdict-narrative_outpaces_evidence,
+.skeptic-panel.verdict-claims_need_mapping {
+  box-shadow: inset 4px 0 0 #f59e0b, 0 18px 48px rgba(15, 23, 42, 0.08);
+}
+
+.skeptic-panel.verdict-evidence_incomplete {
+  box-shadow: inset 4px 0 0 #0ea5e9, 0 18px 48px rgba(15, 23, 42, 0.08);
+}
+
+.skeptic-panel.verdict-evidence_backed {
+  box-shadow: inset 4px 0 0 #16a34a, 0 18px 48px rgba(15, 23, 42, 0.08);
+}
+
+.skeptic-headline {
+  max-width: 920px;
+  margin: 0 0 14px;
+  color: #334155;
+  font-size: 15px;
+}
+
+.skeptic-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.skeptic-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.skeptic-columns h3 {
+  margin-bottom: 8px;
+}
+
+.skeptic-list {
+  display: grid;
+  gap: 8px;
+}
+
+.skeptic-list article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.skeptic-list strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.skeptic-list span {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .radar-panel {
@@ -1528,6 +1802,7 @@ p {
   }
 
   .command-panel,
+  .hot-projects-panel,
   .wallet-panel,
   .report-toolbar,
   .icon-action {
@@ -1602,9 +1877,12 @@ p {
 
   .metric-grid,
   .agent-grid,
+  .hot-projects-grid,
   .signal-preview,
   .wallet-summary-grid,
-  .wallet-evidence-grid {
+  .wallet-evidence-grid,
+  .skeptic-metrics,
+  .skeptic-columns {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1628,6 +1906,8 @@ p {
   .recommendations-panel,
   .research-panel,
   .sources-panel,
+  .hot-projects-panel,
+  .skeptic-panel,
   .wallet-panel,
   .detail-card {
     padding: 14px;
@@ -1652,10 +1932,6 @@ p {
   .search-field input,
   .address-field input {
     font-size: 15px;
-  }
-
-  .progress-steps {
-    grid-template-columns: 1fr;
   }
 
   .radar-panel {
@@ -1698,9 +1974,12 @@ p {
 
   .metric-grid,
   .agent-grid,
+  .hot-projects-grid,
   .signal-preview,
   .wallet-summary-grid,
-  .wallet-evidence-grid {
+  .wallet-evidence-grid,
+  .skeptic-metrics,
+  .skeptic-columns {
     grid-template-columns: 1fr;
   }
 

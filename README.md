@@ -1,6 +1,6 @@
 # ChainLens
 
-ChainLens is a Web3 project risk investigation app. It accepts a project name, website, or contract evidence, builds a project-level profile, attaches token-level evidence, and separates project risk from a connected wallet's direct exposure.
+ChainLens is a Web3 project check app for people who want plain evidence before trusting a project pitch. It accepts a project name, website, or contract evidence, checks what can be verified, and separates project risk from a connected wallet's direct exposure.
 
 ## Quick Start
 
@@ -33,6 +33,13 @@ XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
 ```
 
+Optional daily hot project list:
+
+```bash
+CRON_SECRET=replace_with_a_long_random_value
+BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
+```
+
 Without xAPI, ChainLens still fetches user-provided websites, GitHub links, and PDF whitepapers. Set `XAPI_KEY` or `XAPI_API_KEY` to enable xAPI web search through `action.xapi.to` using `XAPI_SEARCH_ACTION` (defaults to `web.search`). `XAPI_SEARCH_URL` is still supported for legacy xapi.to-compatible endpoints.
 
 ## Vercel Deployment
@@ -61,6 +68,8 @@ Optional:
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
+CRON_SECRET=replace_with_a_long_random_value
+BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
 ```
 
 Do not create `VITE_*` copies of server credentials. In production, the client calls the API on the same origin, so `VITE_API_BASE` is usually unnecessary. If a real API key was ever shared outside your machine, rotate it before adding it to Vercel.
@@ -88,6 +97,19 @@ curl -X POST "http://localhost:8787/api/project/analyze" \
   -d '{"chainId":"1","query":"Aave aave.com 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"}'
 ```
 
+`GET /api/hot-projects` returns the latest API-backed hot project list:
+
+```bash
+curl "http://localhost:8787/api/hot-projects?chainId=1&dex=uniswap&limit=8"
+```
+
+`GET /api/cron/hot-projects` refreshes the hot project list for Vercel Cron. It requires `Authorization: Bearer $CRON_SECRET`:
+
+```bash
+curl "http://localhost:8787/api/cron/hot-projects" \
+  -H "authorization: Bearer $CRON_SECRET"
+```
+
 `POST /api/openai/project` runs the OpenAI-compatible project synthesis step:
 
 ```bash
@@ -103,7 +125,8 @@ When `OPENAI_API_KEY` is not configured, the endpoint returns `openai.status = "
 The current workbench includes:
 
 - Project-level identity, asset, governance, community, and data-quality findings
-- Narrative-to-delivery checks that flag promotional claims when they are not backed by verified contracts, active repositories, audits, governance, or other reproducible artifacts
+- Checks that flag project claims when they are not backed by verified contracts, active repositories, audits, governance, or other reproducible artifacts
+- A daily API-backed Ethereum/Uniswap hot project list, refreshed by Vercel Cron and reviewed by ChainLens agents
 - Contract security and holder concentration signals from GoPlus
 - Liquidity signals from GoPlus and DEXScreener, marked as third-party auxiliary evidence
 - Contract-address project lookup from CoinGecko, used to infer homepage, repos, socials, and explorer links when the user only provides an address
@@ -161,7 +184,7 @@ This runs syntax checks across the server source and a production Vite build for
 
 # ChainLens（中文）
 
-ChainLens 是一个 Web3 项目风险调查应用。它接收项目名称、网站或合约证据，构建项目级别的画像，附加代币级别的证据，并将项目风险与连接钱包的直接敞口区分开来。
+ChainLens 是一个给普通人用的 Web3 项目检查工具。它接收项目名称、官网或合约证据，告诉你哪些内容能查到证据，哪些还只是项目方在说，并把项目风险和你自己钱包的直接风险分开看。
 
 ## 快速开始
 
@@ -194,6 +217,13 @@ XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
 ```
 
+可选的每日热门项目列表：
+
+```bash
+CRON_SECRET=replace_with_a_long_random_value
+BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
+```
+
 即使没有 xAPI，ChainLens 仍会抓取用户提供的网站、GitHub 链接和 PDF 白皮书。设置 `XAPI_KEY` 或 `XAPI_API_KEY` 后，后端会默认通过 `action.xapi.to` 的 `web.search` 做外部网页搜索；`XAPI_SEARCH_URL` 仅用于兼容旧版 xapi.to 端点。
 
 ## Vercel 部署
@@ -222,6 +252,8 @@ OPENAI_TIMEOUT_MS=90000
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
+CRON_SECRET=replace_with_a_long_random_value
+BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
 ```
 
 不要为服务端凭证创建 `VITE_*` 副本。生产环境中，客户端通过同源调用 API，因此通常不需要 `VITE_API_BASE`。如果真实的 API 密钥曾在你的机器之外泄露，请在添加到 Vercel 之前轮换密钥。
@@ -249,6 +281,19 @@ curl -X POST "http://localhost:8787/api/project/analyze" \
   -d '{"chainId":"1","query":"Aave aave.com 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"}'
 ```
 
+`GET /api/hot-projects` 返回最近一次由后端 API 生成的热门项目列表：
+
+```bash
+curl "http://localhost:8787/api/hot-projects?chainId=1&dex=uniswap&limit=8"
+```
+
+`GET /api/cron/hot-projects` 给 Vercel Cron 用来刷新热门项目列表。它必须带 `Authorization: Bearer $CRON_SECRET`：
+
+```bash
+curl "http://localhost:8787/api/cron/hot-projects" \
+  -H "authorization: Bearer $CRON_SECRET"
+```
+
 `POST /api/openai/project` 运行 OpenAI 兼容的项目综合评测步骤：
 
 ```bash
@@ -263,8 +308,9 @@ curl -X POST "http://localhost:8787/api/openai/project" \
 
 当前工作台包含：
 
-- 项目级别的身份、资产、叙事兑现、治理、社区和数据质量发现
-- 叙事兑现检查：当宣传或愿景声明缺少已验证合约、活跃仓库、审计、治理或其他可复现交付证据支撑时给出提示
+- 项目是谁、资产、宣传说法、治理、社区和数据是否够用等检查
+- 宣传说法检查：当项目方说法缺少已验证合约、活跃仓库、审计、治理或其他可复现证据支撑时给出提示
+- 每日热门项目列表：由后端 API 提供，Vercel Cron 定时刷新，并交给 ChainLens agents 看一遍证据
 - 来自 GoPlus 的合约安全性和持币集中度信号
 - 来自 GoPlus 和 DEXScreener 的流动性信号，标记为第三方辅助证据
 - 来自 CoinGecko 的合约地址项目查询，用于在用户仅提供地址时推断主页、仓库、社交链接和浏览器链接

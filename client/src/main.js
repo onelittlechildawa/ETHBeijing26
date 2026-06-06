@@ -10,6 +10,7 @@ import {
   Database,
   ExternalLink,
   FileText,
+  Flame,
   Gauge,
   Github,
   History,
@@ -19,6 +20,7 @@ import {
   Loader2,
   Network,
   Printer,
+  RefreshCw,
   Search,
   ShieldAlert,
   Sparkles,
@@ -26,19 +28,11 @@ import {
   Users,
   WalletCards
 } from "lucide";
-import { analyzeProject } from "./api.js";
+import { analyzeProject, fetchHotProjects } from "./api.js";
 import { analyzeWalletExposure, connectWallet, hasWalletProvider } from "./wallet.js";
 import "./styles.css";
 
 const DEFAULT_CHAIN_ID = "1";
-
-const ANALYSIS_PROGRESS_STAGES = [
-  { key: "scope", labelKey: "progressScope", startMs: 0, percent: 12 },
-  { key: "contracts", labelKey: "progressContracts", startMs: 2500, percent: 28 },
-  { key: "evidence", labelKey: "progressEvidence", startMs: 6500, percent: 48 },
-  { key: "ai", labelKey: "progressAi", startMs: 11000, percent: 68 },
-  { key: "report", labelKey: "progressReport", startMs: 17000, percent: 86 }
-];
 
 const STORAGE_KEYS = {
   locale: "chainlens.locale",
@@ -48,17 +42,17 @@ const MAX_HISTORY_ITEMS = 10;
 
 const messages = {
   en: {
-    appTitle: "Project risk investigation",
-    modelEyebrow: "Investigation model",
+    appTitle: "Web3 project check",
+    modelEyebrow: "Plain evidence check",
     network: "Network",
-    queryLabel: "Project, website, or contract evidence",
-    queryPlaceholder: "Project, site, or 0x address",
+    queryLabel: "Project name, website, or contract evidence",
+    queryPlaceholder: "Project name or website; contract address optional",
     investigating: "Analyzing",
     analyzeProject: "Analyze",
     languageToggle: "中文",
     languageToggleLabel: "Switch to Chinese",
-    readyTitle: "Ready for analysis",
-    readyBody: "No project has been analyzed in this session.",
+    readyTitle: "Check the proof before the pitch",
+    readyBody: "Enter a project name or official website. ChainLens shows what is backed up and what is just talk.",
     previewIdentityTitle: "Project identity",
     previewIdentityBody: "Waiting for official surfaces",
     previewAssetTitle: "Asset evidence",
@@ -77,6 +71,30 @@ const messages = {
     exportJson: "JSON",
     exportPdf: "PDF",
     exportReport: "Export report",
+    hotProjectsEyebrow: "Updated daily by agents",
+    hotProjectsTitle: "Hot Uniswap projects to check",
+    hotProjectsBody: "The API picks hot Ethereum/Uniswap projects each day, then ChainLens agents check the evidence.",
+    hotProjectsLoading: "Loading hot projects",
+    hotProjectsEmpty: "No hot project list has been generated yet.",
+    hotProjectsError: "Hot projects unavailable",
+    tabAnalyze: "Project check",
+    tabHotProjects: "Hot projects",
+    hotGenerated: "Generated",
+    hotRefresh: "Refresh list",
+    analyzeThis: "Analyze",
+    heat: "Heat",
+    liquidity: "Liquidity",
+    volume24h: "24h volume",
+    txns24h: "24h txns",
+    agentReviewed: "Agent reviewed",
+    skepticReview: "Simple take",
+    skepticVerdict: "Take",
+    hypePressure: "Marketing level",
+    evidenceCoverage: "Evidence level",
+    claimAudit: "Claims checked",
+    nextQuestions: "Next questions",
+    sourceDigest: "Digest source",
+    noQuestions: "No follow-up questions from current evidence.",
     scoreTopline: "Project Risk score",
     riskActionsTitle: "Actionable next steps",
     riskActionsEmpty: "No immediate action required from current evidence.",
@@ -90,13 +108,17 @@ const messages = {
     coordinatedDiligence: "Coordinated Diligence",
     agentCrew: "Agent Review",
     agentsCount: "{count} agent{plural}",
-    analysisProgress: "Analysis progress",
-    progressElapsed: "{seconds}s elapsed",
-    progressScope: "Resolving scope",
-    progressContracts: "Checking contracts",
-    progressEvidence: "Collecting evidence",
-    progressAi: "Reviewing findings",
-    progressReport: "Assembling report",
+    analysisProgress: "Live analysis progress",
+    progressStep: "Step {step} of {total}",
+    progressNormalize: "Normalize input",
+    progressInputEvidence: "Collect supplied evidence",
+    progressContractAnalysis: "Analyze contract targets",
+    progressProjectEvidence: "Expand project evidence",
+    progressContractRefresh: "Refresh discovered contracts",
+    progressScoring: "Score findings",
+    progressAiReview: "Run analyst review",
+    progressAgentReview: "Coordinate agent review",
+    progressReport: "Assemble report",
     queryRequired: "Enter a project, website, or contract address.",
     dimensionHealth: "Dimension health",
     projectFindings: "Project findings",
@@ -171,23 +193,23 @@ const messages = {
     tokenReports: "Token reports"
   },
   zh: {
-    appTitle: "项目风险调查",
-    modelEyebrow: "调查模型",
+    appTitle: "Web3 项目检查",
+    modelEyebrow: "先看证据",
     network: "网络",
-    queryLabel: "项目、官网或合约证据",
-    queryPlaceholder: "项目、官网或 0x 合约地址...",
+    queryLabel: "项目名、官网或合约证据",
+    queryPlaceholder: "输入项目名或官网，不懂合约也可以",
     investigating: "分析中",
     analyzeProject: "分析",
     languageToggle: "EN",
     languageToggleLabel: "切换到英文",
-    readyTitle: "等待分析",
-    readyBody: "本次会话还没有分析任何项目。",
-    previewIdentityTitle: "项目身份",
-    previewIdentityBody: "等待官方入口",
+    readyTitle: "先看证据，再看宣传",
+    readyBody: "输入项目名或官网，ChainLens 会告诉你哪些有证据，哪些只是项目方在说。",
+    previewIdentityTitle: "项目是谁",
+    previewIdentityBody: "等待官网或官方资料",
     previewAssetTitle: "资产证据",
     previewAssetBody: "等待合约地址",
-    previewGovernanceTitle: "治理与活跃度",
-    previewGovernanceBody: "等待项目证据",
+    previewGovernanceTitle: "谁在维护",
+    previewGovernanceBody: "等待项目资料",
     historyEyebrow: "本地记录",
     historyTitle: "分析历史",
     historyEmpty: "这个浏览器里还没有保存报告。",
@@ -200,36 +222,64 @@ const messages = {
     exportJson: "JSON",
     exportPdf: "PDF",
     exportReport: "导出报告",
-    scoreTopline: "项目风险分",
-    riskActionsTitle: "可执行建议",
+    hotProjectsEyebrow: "每天自动检查",
+    hotProjectsTitle: "热门 Uniswap 项目检查",
+    hotProjectsBody: "后端 API 每天挑一些热门 Ethereum/Uniswap 项目，让 agents 看一遍证据。",
+    hotProjectsLoading: "正在加载热门项目",
+    hotProjectsEmpty: "还没有生成热门项目列表。",
+    hotProjectsError: "热门列表暂时打不开",
+    tabAnalyze: "项目检查",
+    tabHotProjects: "热门项目",
+    hotGenerated: "生成时间",
+    hotRefresh: "重新读取",
+    analyzeThis: "分析",
+    heat: "热度",
+    liquidity: "流动性",
+    volume24h: "24h 成交量",
+    txns24h: "24h 交易",
+    agentReviewed: "Agents 看过",
+    skepticReview: "简单结论",
+    skepticVerdict: "结论",
+    hypePressure: "宣传多不多",
+    evidenceCoverage: "证据够不够",
+    claimAudit: "宣传说法",
+    nextQuestions: "还该问什么",
+    sourceDigest: "列表来源",
+    noQuestions: "目前没有额外要问的问题。",
+    scoreTopline: "风险分",
+    riskActionsTitle: "建议你先看这些",
     riskActionsEmpty: "当前证据下没有必须立即执行的动作。",
-    projectRisk: "项目风险",
-    surfacePending: "入口待确认",
+    projectRisk: "项目情况",
+    surfacePending: "还没确认官网",
     contracts: "合约数",
     scoredTokens: "已评分代币",
-    research: "研究证据",
+    research: "查到的资料",
     researchItems: "{count} 条",
-    findings: "风险发现",
-    coordinatedDiligence: "协同尽调",
-    agentCrew: "Agent 复核",
+    findings: "发现的问题",
+    coordinatedDiligence: "几个 Agent 的看法",
+    agentCrew: "Agent 检查",
     agentsCount: "{count} 个 agent",
-    analysisProgress: "分析进度",
-    progressElapsed: "已用 {seconds} 秒",
-    progressScope: "解析项目范围",
-    progressContracts: "检查合约",
-    progressEvidence: "收集证据",
-    progressAi: "复核发现",
+    analysisProgress: "实时分析进度",
+    progressStep: "第 {step} / {total} 步",
+    progressNormalize: "解析输入",
+    progressInputEvidence: "收集输入证据",
+    progressContractAnalysis: "分析合约目标",
+    progressProjectEvidence: "扩展项目证据",
+    progressContractRefresh: "刷新新发现合约",
+    progressScoring: "计算风险发现",
+    progressAiReview: "运行分析员复核",
+    progressAgentReview: "协调 Agent 复核",
     progressReport: "生成报告",
     queryRequired: "请输入项目、官网或合约地址。",
-    dimensionHealth: "维度健康度",
-    projectFindings: "项目发现",
+    dimensionHealth: "各项情况",
+    projectFindings: "发现的问题",
     found: "发现 {count} 条",
     noMaterialFindings: "当前数据中没有发现重大风险。",
     identity: "身份",
     website: "官网",
     input: "输入",
     primaryChain: "主链",
-    researchStatus: "研究状态",
+    researchStatus: "查找状态",
     contract: "合约",
     primary: "主合约",
     model: "模型",
@@ -241,17 +291,17 @@ const messages = {
     low: "低",
     info: "信息",
     openai: "OpenAI",
-    recommendationAgent: "建议 Agent",
-    nextDiligenceActions: "下一步尽调动作",
+    recommendationAgent: "建议",
+    nextDiligenceActions: "接下来可以做什么",
     actionCount: "{count} 条动作",
-    suppressedFalsePositives: "已压制误报",
+    suppressedFalsePositives: "排除的误报",
     suppressedCount: "已压制 {count} 条",
     falsePositive: "误报",
-    analystNotes: "分析员备注",
-    projectEvidence: "项目证据",
+    analystNotes: "AI 备注",
+    projectEvidence: "查到的资料",
     artifactCount: "{count} 个证据",
     open: "打开",
-    contractEvidence: "合约证据",
+    contractEvidence: "合约资料",
     contractCount: "{count} 个合约",
     sources: "数据源",
     walletExposure: "钱包暴露",
@@ -304,8 +354,14 @@ let state = {
   chainId: DEFAULT_CHAIN_ID,
   query: "",
   address: "",
-  analysisStartedAt: null,
-  progressTick: 0,
+  activeTab: "analyze",
+  analysisProgress: null,
+  hotProjects: {
+    loading: false,
+    loaded: false,
+    error: null,
+    digest: null
+  },
   wallet: {
     provider: null,
     account: null,
@@ -318,7 +374,6 @@ let state = {
 
 let radarChart = null;
 let boundWalletProvider = null;
-let progressTimer = null;
 
 const app = document.querySelector("#app");
 
@@ -354,14 +409,17 @@ function render() {
                 <span>${state.loading ? t("investigating") : t("analyzeProject")}</span>
               </button>
             </form>
-            ${state.loading ? analysisProgressTemplate() : ""}
+            ${state.loading && state.analysisProgress ? analysisProgressTemplate(state.analysisProgress) : ""}
             ${state.error ? `<div class="error-banner">${icon(AlertTriangle)}<span>${escapeHtml(state.error)}</span></div>` : ""}
           </div>
           ${historyTemplate()}
         </div>
       </section>
-      ${state.report ? reportTemplate(state.report) : emptyTemplate()}
-      ${walletPanelTemplate(state.report, state.wallet)}
+      ${mainTabsTemplate()}
+      ${state.activeTab === "hot" ? hotProjectsTemplate() : `
+        ${state.report ? reportTemplate(state.report) : emptyTemplate()}
+        ${walletPanelTemplate(state.report, state.wallet)}
+      `}
     </main>
   `;
 
@@ -403,6 +461,33 @@ function bindEvents() {
     render();
   });
 
+  document.querySelector("#hot-projects-refresh")?.addEventListener("click", () => {
+    loadHotProjects({ force: true });
+  });
+
+  document.querySelectorAll("[data-main-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const activeTab = button.dataset.mainTab || "analyze";
+      state = {
+        ...state,
+        activeTab
+      };
+      render();
+      if (activeTab === "hot") loadHotProjects();
+    });
+  });
+
+  document.querySelectorAll("[data-hot-analyze]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const query = button.dataset.hotAnalyze;
+      if (!query) return;
+      runAnalysis({
+        chainId: button.dataset.hotChain || DEFAULT_CHAIN_ID,
+        query
+      });
+    });
+  });
+
   const walletAction = document.querySelector("#wallet-action");
   if (walletAction) {
     walletAction.addEventListener("click", () => {
@@ -430,32 +515,75 @@ async function runAnalysis({ chainId, query, address }) {
     chainId,
     query,
     address,
-    analysisStartedAt: Date.now(),
-    progressTick: 0,
+    analysisProgress: null,
     wallet: {
       ...state.wallet,
       exposure: null,
       error: null
     }
   };
-  startAnalysisTicker();
   render();
 
   try {
-    const report = await analyzeProject({ chainId, query, address });
+    const report = await analyzeProject(
+      { chainId, query, address },
+      {
+        onProgress: (analysisProgress) => {
+          state = { ...state, analysisProgress };
+          render();
+        }
+      }
+    );
     const history = rememberReport(report, { query, chainId, address });
-    stopAnalysisTicker();
-    state = { ...state, loading: false, report, history, analysisStartedAt: null, progressTick: 0 };
+    state = { ...state, loading: false, report, history, analysisProgress: null };
     render();
 
     if (state.wallet.provider && state.wallet.account) {
       await runWalletExposure(report);
     }
   } catch (error) {
-    stopAnalysisTicker();
-    state = { ...state, loading: false, error: error.message, analysisStartedAt: null, progressTick: 0 };
+    state = { ...state, loading: false, error: error.message, analysisProgress: null };
     render();
   }
+}
+
+async function loadHotProjects({ force = false } = {}) {
+  if (state.hotProjects.loading) return;
+  if (state.hotProjects.loaded && !force) return;
+
+  state = {
+    ...state,
+    hotProjects: {
+      ...state.hotProjects,
+      loading: true,
+      error: null
+    }
+  };
+  render();
+
+  try {
+    const digest = await fetchHotProjects({ chainId: DEFAULT_CHAIN_ID, dex: "uniswap", limit: 8 });
+    state = {
+      ...state,
+      hotProjects: {
+        loading: false,
+        loaded: true,
+        error: null,
+        digest
+      }
+    };
+  } catch (error) {
+    state = {
+      ...state,
+      hotProjects: {
+        ...state.hotProjects,
+        loading: false,
+        loaded: true,
+        error: error.message
+      }
+    };
+  }
+  render();
 }
 
 async function connectWalletForReport() {
@@ -636,69 +764,137 @@ function historyItemTemplate(item) {
   `;
 }
 
-function analysisProgressTemplate() {
-  const progress = currentAnalysisProgress();
-  if (!progress) return "";
+function mainTabsTemplate() {
+  return `
+    <nav class="main-tabs" aria-label="ChainLens views">
+      ${mainTabButton("analyze", t("tabAnalyze"), Search)}
+      ${mainTabButton("hot", t("tabHotProjects"), Flame)}
+    </nav>
+  `;
+}
+
+function mainTabButton(tab, label, iconType) {
+  const selected = state.activeTab === tab;
+  return `
+    <button class="main-tab ${selected ? "is-active" : ""}" type="button" data-main-tab="${tab}" aria-pressed="${selected ? "true" : "false"}">
+      ${icon(iconType)}
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
+function hotProjectsTemplate() {
+  const hot = state.hotProjects;
+  const digest = hot.digest;
+  const items = digest?.items || [];
+  const disabled = hot.loading || state.loading ? "disabled" : "";
 
   return `
-    <div class="analysis-progress" role="status" aria-live="polite">
-      <div class="progress-topline">
-        <span>${icon(Loader2, "spin")} <strong>${t("analysisProgress")}</strong></span>
-        <span>${t("progressElapsed", { seconds: progress.seconds })}</span>
+    <section class="hot-projects-panel" aria-label="${t("hotProjectsTitle")}">
+      <div class="panel-heading hot-projects-heading">
+        <div>
+          <p class="eyebrow">${icon(Flame)} ${t("hotProjectsEyebrow")}</p>
+          <h2>${t("hotProjectsTitle")}</h2>
+          <p>${t("hotProjectsBody")}</p>
+        </div>
+        <div class="hot-projects-meta">
+          <span>${t("hotGenerated")}: ${digest?.generatedAt ? escapeHtml(formatDateTime(digest.generatedAt)) : "N/A"}</span>
+          <span>${t("sourceDigest")}: ${escapeHtml(localizeStatus(digest?.sourceStatus || "empty"))}</span>
+          <button id="hot-projects-refresh" class="icon-action compact-action" type="button" title="${t("hotRefresh")}" aria-label="${t("hotRefresh")}" ${disabled}>
+            ${hot.loading ? icon(Loader2, "spin") : icon(RefreshCw)}
+          </button>
+        </div>
       </div>
-      <div class="progress-track" aria-hidden="true">
-        <span style="width: ${progress.percent}%"></span>
-      </div>
-      <ol class="progress-steps">
-        ${ANALYSIS_PROGRESS_STAGES.map((stage, index) => `
-          <li class="${index < progress.index ? "complete" : index === progress.index ? "current" : ""}">
-            <span></span>
-            <strong>${t(stage.labelKey)}</strong>
-          </li>
-        `).join("")}
-      </ol>
+      ${hotProjectsBodyTemplate(hot, items)}
+    </section>
+  `;
+}
+
+function hotProjectsBodyTemplate(hot, items) {
+  if (hot.loading && !items.length) {
+    return `<div class="hot-projects-empty">${icon(Loader2, "spin")} <span>${t("hotProjectsLoading")}</span></div>`;
+  }
+
+  if (hot.error && !items.length) {
+    return `<div class="hot-projects-empty error">${icon(AlertTriangle)} <span>${t("hotProjectsError")}: ${escapeHtml(hot.error)}</span></div>`;
+  }
+
+  if (!items.length) {
+    return `<div class="hot-projects-empty">${icon(Activity)} <span>${t("hotProjectsEmpty")}</span></div>`;
+  }
+
+  return `
+    <div class="hot-projects-grid">
+      ${items.map(hotProjectCardTemplate).join("")}
     </div>
   `;
 }
 
-function currentAnalysisProgress() {
-  if (!state.loading || !state.analysisStartedAt) return null;
-  const elapsed = Math.max(0, Date.now() - state.analysisStartedAt);
-  let stageIndex = 0;
-  for (let index = 0; index < ANALYSIS_PROGRESS_STAGES.length; index += 1) {
-    if (elapsed >= ANALYSIS_PROGRESS_STAGES[index].startMs) stageIndex = index;
-  }
-  const stage = ANALYSIS_PROGRESS_STAGES[stageIndex];
-  const nextStage = ANALYSIS_PROGRESS_STAGES[stageIndex + 1];
-  const nextStart = nextStage?.startMs ?? stage.startMs + 12000;
-  const nextPercent = nextStage ? nextStage.percent - 2 : 94;
-  const interval = Math.max(1, nextStart - stage.startMs);
-  const localProgress = Math.min(1, (elapsed - stage.startMs) / interval);
-  const percent = Math.round(stage.percent + (nextPercent - stage.percent) * localProgress);
+function hotProjectCardTemplate(item) {
+  const skeptic = item.skepticReview || {};
+  const metrics = item.metrics || {};
+  const query = `${item.name || item.symbol || "Project"} ${item.address || ""}`.trim();
+  const agents = item.agentSummaries || skeptic.agentReview?.summaries || [];
+  const nextQuestion = (skeptic.nextQuestions || [])[0];
+  const finding = (item.primaryFindings || [])[0];
 
-  return {
-    index: stageIndex,
-    percent: Math.min(94, Math.max(8, percent)),
-    seconds: Math.floor(elapsed / 1000)
-  };
+  return `
+    <article class="hot-project-card verdict-${escapeHtml(skeptic.verdict || "unknown")}">
+      <div class="hot-project-top">
+        <div>
+          <span class="hot-rank">#${formatNumber(item.rank || 0)}</span>
+          <h3>${escapeHtml(item.name || item.symbol || "Unknown project")}</h3>
+          <p>${escapeHtml(item.symbol || shortAddress(item.address))} / ${escapeHtml(item.dex?.name || item.dex?.id || "DEX")}</p>
+        </div>
+        <button class="icon-action compact-action" type="button" data-hot-analyze="${escapeHtml(query)}" data-hot-chain="${escapeHtml(item.chain?.id || DEFAULT_CHAIN_ID)}" title="${t("analyzeThis")}" aria-label="${t("analyzeThis")}" ${state.loading ? "disabled" : ""}>
+          ${icon(Search)}
+        </button>
+      </div>
+      <div class="hot-metrics">
+        ${metric(t("heat"), formatNumber(item.heat?.score || 0))}
+        ${metric(t("volume24h"), formatCompactUsd(metrics.volumeH24))}
+        ${metric(t("liquidity"), formatCompactUsd(metrics.liquidityUsd))}
+        ${metric(t("txns24h"), formatNumber(metrics.txnsH24 || 0))}
+      </div>
+      <div class="hot-verdict">
+        <strong>${escapeHtml(localizeSkepticVerdict(skeptic.verdict))}</strong>
+        <span>${escapeHtml(localizeSkepticHeadline(skeptic.headline, skeptic.verdict))}</span>
+      </div>
+      <div class="hot-review-row">
+        <span>${t("hypePressure")}: ${escapeHtml(localizeLevel(skeptic.hypePressure?.level))} / ${formatNumber(skeptic.hypePressure?.score || 0)}</span>
+        <span>${t("evidenceCoverage")}: ${escapeHtml(localizeLevel(skeptic.evidenceCoverage?.level))} / ${formatNumber(skeptic.evidenceCoverage?.score || 0)}</span>
+      </div>
+      <div class="hot-agent-row">
+        ${icon(Bot)}
+        <span>${t("agentReviewed")}: ${escapeHtml(localizeStatus(skeptic.agentReview?.status || "partial"))}</span>
+        <strong>${formatAgentCount(agents.length)}</strong>
+      </div>
+      ${(nextQuestion || finding) ? `
+        <p class="hot-question">${escapeHtml(localizeRecommendationText(nextQuestion || finding.context || finding.title))}</p>
+      ` : ""}
+      ${item.pair?.url ? `<a class="hot-pair-link" href="${escapeHtml(item.pair.url)}" target="_blank" rel="noreferrer">${icon(ExternalLink)} <span>${escapeHtml(item.pair.name || item.pair.address || "Pair")}</span></a>` : ""}
+    </article>
+  `;
 }
 
-function startAnalysisTicker() {
-  stopAnalysisTicker();
-  progressTimer = window.setInterval(() => {
-    if (!state.loading) {
-      stopAnalysisTicker();
-      return;
-    }
-    state = { ...state, progressTick: state.progressTick + 1 };
-    render();
-  }, 1000);
-}
-
-function stopAnalysisTicker() {
-  if (!progressTimer) return;
-  window.clearInterval(progressTimer);
-  progressTimer = null;
+function analysisProgressTemplate(progress) {
+  const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+  const detail = progress.detail ? `<span>${escapeHtml(progress.detail)}</span>` : "";
+  return `
+    <div class="analysis-progress" role="status" aria-live="polite">
+      <div class="progress-topline">
+        <span>${icon(Loader2, "spin")} <strong>${t("analysisProgress")}</strong></span>
+        <span>${t("progressStep", { step: progress.step || 0, total: progress.total || "?" })}</span>
+      </div>
+      <div class="progress-track" aria-hidden="true">
+        <span style="width: ${percent}%"></span>
+      </div>
+      <div class="progress-stage">
+        <strong>${escapeHtml(localizeProgressLabel(progress))}</strong>
+        ${detail}
+      </div>
+    </div>
+  `;
 }
 
 function reportTemplate(report) {
@@ -743,6 +939,8 @@ function reportTemplate(report) {
           ${metric(t("findings"), formatNumber(report.findings.length))}
         </div>
       </div>
+
+      ${skepticReviewTemplate(report)}
 
       ${agentCrewTemplate(report)}
 
@@ -1050,6 +1248,53 @@ function renderRadar(report) {
   });
 }
 
+function skepticReviewTemplate(report) {
+  const review = report.skepticReview;
+  if (!review) return "";
+  const claimAudit = review.claimAudit || [];
+  const questions = review.nextQuestions || [];
+  return `
+    <div class="skeptic-panel verdict-${escapeHtml(review.verdict || "unknown")}">
+      <div class="panel-heading compact">
+        <div>
+          <p class="eyebrow">${t("skepticReview")}</p>
+          <h2>${escapeHtml(localizeSkepticVerdict(review.verdict))}</h2>
+        </div>
+        <span>${escapeHtml(localizeStatus(review.agentReview?.status || "partial"))}</span>
+      </div>
+      <p class="skeptic-headline">${escapeHtml(localizeSkepticHeadline(review.headline, review.verdict))}</p>
+      <div class="skeptic-metrics">
+        ${metric(t("hypePressure"), `${formatNumber(review.hypePressure?.score || 0)} / ${escapeHtml(localizeLevel(review.hypePressure?.level))}`)}
+        ${metric(t("evidenceCoverage"), `${formatNumber(review.evidenceCoverage?.score || 0)} / ${escapeHtml(localizeLevel(review.evidenceCoverage?.level))}`)}
+        ${metric(t("agentReviewed"), `${formatNumber(review.agentReview?.summaries?.length || 0)} agents`)}
+      </div>
+      <div class="skeptic-columns">
+        <div>
+          <h3>${t("claimAudit")}</h3>
+          <div class="skeptic-list">
+            ${claimAudit.slice(0, 3).map((claim) => `
+              <article>
+                <strong>${escapeHtml(localizeClaimCategory(claim.category))}</strong>
+                <span>${escapeHtml(claim.question || claim.claim)}</span>
+              </article>
+            `).join("") || `<article><span>${t("evidenceAttached")}</span></article>`}
+          </div>
+        </div>
+        <div>
+          <h3>${t("nextQuestions")}</h3>
+          <div class="skeptic-list">
+            ${questions.slice(0, 3).map((question) => `
+              <article>
+                <span>${escapeHtml(localizeRecommendationText(question))}</span>
+              </article>
+            `).join("") || `<article><span>${t("noQuestions")}</span></article>`}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function agentCrewTemplate(report) {
   const agents = report.agents || [];
   if (!agents.length) return "";
@@ -1080,7 +1325,7 @@ function agentCardTemplate(agent) {
           <span>${escapeHtml(localizeStatus(agent.status || "partial"))} / ${formatNumber(agent.evidenceCount || 0)} ${t("evidence").toLowerCase()}</span>
         </div>
       </div>
-      <p>${escapeHtml(agent.summary || "Agent result pending.")}</p>
+      <p>${escapeHtml(localizeAgentSummary(agent))}</p>
       <div class="agent-meta-row">
         <strong>${formatNumber(findings.length)} ${t("findings").toLowerCase()}</strong>
         <span>${t("confidence", { value: Math.round((agent.confidence || 0.5) * 100) })}</span>
@@ -1360,9 +1605,9 @@ function t(key, params = {}) {
 function loadLocale() {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.locale);
-    return saved === "zh" || saved === "en" ? saved : "en";
+    return saved === "zh" || saved === "en" ? saved : "zh";
   } catch {
-    return "en";
+    return "zh";
   }
 }
 
@@ -1503,6 +1748,18 @@ function buildMarkdownReport(report) {
   lines.push(`- ${t("summary")}: ${localizeSummaryLabel(report.summary?.label)} - ${localizeSummaryDescription(report.summary?.description, report.summary?.level)}`);
   lines.push("");
 
+  if (report.skepticReview) {
+    lines.push(`## ${t("skepticReview")}`);
+    lines.push(`- ${t("skepticVerdict")}: ${localizeSkepticVerdict(report.skepticReview.verdict)}`);
+    lines.push(`- ${t("summary")}: ${localizeSkepticHeadline(report.skepticReview.headline, report.skepticReview.verdict)}`);
+    lines.push(`- ${t("hypePressure")}: ${report.skepticReview.hypePressure?.score ?? "N/A"} / ${localizeLevel(report.skepticReview.hypePressure?.level)}`);
+    lines.push(`- ${t("evidenceCoverage")}: ${report.skepticReview.evidenceCoverage?.score ?? "N/A"} / ${localizeLevel(report.skepticReview.evidenceCoverage?.level)}`);
+    (report.skepticReview.nextQuestions || []).slice(0, 3).forEach((question, index) => {
+      lines.push(`${index + 1}. ${localizeRecommendationText(question)}`);
+    });
+    lines.push("");
+  }
+
   lines.push(`## ${t("riskActionsTitle")}`);
   if (actions.length) {
     actions.forEach((action, index) => {
@@ -1580,6 +1837,8 @@ function localizeStatus(status) {
     error: "错误",
     not_configured: "未配置",
     empty: "空",
+    fallback: "备用列表",
+    stale: "沿用上次结果",
     unknown: "未知",
     fixture: "示例数据",
     mock: "模拟",
@@ -1625,7 +1884,7 @@ function localizeDimension(dimension) {
   return {
     identity: "身份",
     asset: "资产",
-    delivery: "交付兑现",
+    delivery: "有没有做出来",
     market: "市场",
     governance: "治理",
     community: "社区",
@@ -1639,13 +1898,106 @@ function localizeDimension(dimension) {
 function localizeAgentName(agent) {
   if (state.locale !== "zh") return agent.name || "AI Agent";
   return {
-    "research-agent": "研究 Agent",
-    "open-source-review-agent": "开源审查 Agent",
+    "research-agent": "资料检查 Agent",
+    "open-source-review-agent": "代码检查 Agent",
     "onchain-risk-agent": "链上风险 Agent",
     "synthesis-agent": "综合判断 Agent",
     "recommendation-agent": "建议 Agent",
     "agent-orchestrator": "Agent 编排器"
   }[agent.id] || agent.name || "AI Agent";
+}
+
+function localizeAgentSummary(agent) {
+  if (state.locale !== "zh") return agent.summary || "Agent result pending.";
+  const findingCount = (agent.findings || []).length;
+  const evidenceCount = agent.evidenceCount || 0;
+  return {
+    "research-agent": `查到了 ${formatNumber(evidenceCount)} 条资料，其中一部分还要确认是不是官方来源。`,
+    "open-source-review-agent": findingCount
+      ? `代码和合约来源还有 ${formatNumber(findingCount)} 个点需要看。`
+      : "代码和合约来源没有发现明显问题。",
+    "onchain-risk-agent": findingCount
+      ? `链上检查发现 ${formatNumber(findingCount)} 个需要注意的问题。`
+      : "链上检查没有发现明显问题。",
+    "synthesis-agent": "综合判断已经完成，先看上面的简单结论和下面的问题清单。",
+    "recommendation-agent": `给出了 ${formatNumber((agent.recommendations || []).length)} 条下一步建议。`,
+    "agent-orchestrator": "Agent 检查过程出错，先看基础报告。"
+  }[agent.id] || agent.summary || "Agent 检查完成。";
+}
+
+function localizeProgressLabel(progress) {
+  const key = {
+    normalize: "progressNormalize",
+    input_evidence: "progressInputEvidence",
+    contract_analysis: "progressContractAnalysis",
+    project_evidence: "progressProjectEvidence",
+    contract_refresh: "progressContractRefresh",
+    scoring: "progressScoring",
+    ai_review: "progressAiReview",
+    agent_review: "progressAgentReview",
+    report: "progressReport"
+  }[progress?.id];
+  return key ? t(key) : progress?.label || "";
+}
+
+function localizeSkepticVerdict(verdict) {
+  const value = String(verdict || "unknown");
+  if (state.locale !== "zh") {
+    return {
+      needs_human_review: "Needs human review",
+      narrative_outpaces_evidence: "Narrative outpaces evidence",
+      evidence_incomplete: "Evidence incomplete",
+      claims_need_mapping: "Claims need mapping",
+      evidence_backed: "Evidence-backed so far"
+    }[value] || "Needs review";
+  }
+  return {
+    needs_human_review: "需要人工复核",
+    narrative_outpaces_evidence: "宣传多，证据少",
+    evidence_incomplete: "证据不足",
+    claims_need_mapping: "说法还没对上证据",
+    evidence_backed: "证据还算够"
+  }[value] || "需要复核";
+}
+
+function localizeSkepticHeadline(headline, verdict) {
+  if (state.locale !== "zh") return headline || localizeSkepticVerdict(verdict);
+  return {
+    needs_human_review: "有几个信号比较重，先找人认真看一遍，别只听项目方怎么说。",
+    narrative_outpaces_evidence: "宣传说得多，但现在能查到的证据还跟不上。",
+    evidence_incomplete: "现在资料不够，最好补官网、合约、代码仓库、审计或治理记录后再判断。",
+    claims_need_mapping: "有一些资料，但关键说法还没和真实证据对上。",
+    evidence_backed: "目前查到的资料还算完整，但最好把来源都记下来。"
+  }[verdict] || headline || localizeSkepticVerdict(verdict);
+}
+
+function localizeLevel(level) {
+  const value = String(level || "unknown");
+  if (state.locale !== "zh") return value;
+  return {
+    high: "高",
+    medium: "中",
+    low: "低",
+    strong: "强",
+    partial: "部分",
+    thin: "薄弱",
+    unknown: "未知"
+  }[value] || value;
+}
+
+function localizeClaimCategory(category) {
+  const value = String(category || "claim");
+  if (state.locale !== "zh") return value.replace(/_/g, " ");
+  return {
+    vision: "愿景表述",
+    positioning: "市场定位",
+    rewards: "收益承诺",
+    trend: "趋势标签",
+    decentralization: "去中心化声明",
+    promotion: "宣传话术",
+    baseline: "基础证据",
+    claim: "项目说法"
+  }[value] || value;
 }
 
 function localizeRecommendationText(text) {
@@ -1667,9 +2019,15 @@ function localizeRecommendationText(text) {
     "Verify liquidity control": "核实流动性控制",
     "Check LP ownership, lock status, and pair liquidity on the current trading venue.": "检查当前交易场所的 LP 持有人、锁仓状态和交易对流动性。",
     "Liquidity control can affect exit reliability and market manipulation risk.": "流动性控制会影响退出可靠性和市场操纵风险。",
-    "Validate narrative against shipped evidence": "核对叙事与实际交付",
-    "Map the project's claims to verified contracts, active repositories, audits, governance, usage, or live product evidence before treating the story as substance.": "先把项目声明逐条映射到已验证合约、活跃仓库、审计、治理、使用量或线上产品证据，再把故事当作实质。",
-    "Marketing language without delivery evidence can inflate perceived credibility.": "缺少交付证据的宣传语言会抬高项目的表面可信度。",
+    "Ask the team to explain how the highest-risk finding is mitigated and where that proof is documented.": "问项目方：最严重的问题怎么处理了？证据写在哪里？",
+    "Ask the team for the verified contract source.": "向项目方要已验证的合约源码。",
+    "Ask where the official code repository is and whether it is still maintained.": "问清楚官方代码仓库在哪里、现在还维不维护。",
+    "Ask for an independent audit report with matching contract addresses.": "向项目方要独立审计报告，并确认里面的合约地址对得上。",
+    "Ask who controls upgrades, admin keys, treasury movement, and governance decisions.": "问清楚谁能升级合约、管管理员权限、动金库、做治理决定。",
+    "Ask for the official contract address from the project website or docs.": "从官网或文档里确认官方合约地址。",
+    "Validate narrative against shipped evidence": "看看宣传有没有证据",
+    "Map the project's claims to verified contracts, active repositories, audits, governance, usage, or live product evidence before treating the story as substance.": "先把项目方说的话，对到合约、代码仓库、审计、治理、使用量或真实产品上。",
+    "Marketing language without delivery evidence can inflate perceived credibility.": "宣传话术如果没有证据，很容易让项目看起来比实际更靠谱。",
     "Bind the report to an official project surface": "绑定官方项目入口",
     "Add an official website, docs page, repository, or whitepaper URL and rerun the report.": "补充官网、文档、仓库或白皮书 URL 后重新运行报告。",
     "Project identity is weak without an official surface tying claims to contracts.": "缺少能把项目声明与合约绑定的官方入口时，项目身份证据较弱。",
@@ -1679,8 +2037,8 @@ function localizeRecommendationText(text) {
     "Review repository maintenance": "复核仓库维护状态",
     "Compare repository activity with the project's release, governance, and deployment claims.": "将仓库活动与项目的发布、治理和部署声明进行对照。",
     "Inactive or archived repositories can be an evidence gap for active project claims.": "不活跃或归档仓库会削弱项目仍活跃的证据链。",
-    "Keep a manual diligence trail": "保留人工尽调记录",
-    "Record official docs, repository, governance, and contract links before relying on the project.": "在依赖项目前记录官方文档、仓库、治理和合约链接。",
+    "Keep a manual diligence trail": "把资料来源记下来",
+    "Record official docs, repository, governance, and contract links before relying on the project.": "在相信这个项目前，先记下官网文档、代码仓库、治理页和合约链接。",
     "No major action was triggered, but evidence should remain reproducible.": "当前没有触发重大动作，但证据链仍应可复现。",
     "Review the highest-risk evidence first": "优先复核最高风险证据",
     "Start with the highest-severity finding, verify it against live sources, and document whether it is mitigated.": "从最高严重度发现开始，用实时数据源核对，并记录它是否已被缓解。"
@@ -1702,6 +2060,23 @@ function escapeHtml(value) {
 function formatNumber(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "N/A";
   return new Intl.NumberFormat("en-US").format(Number(value));
+}
+
+function formatCompactUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "N/A";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(number);
+}
+
+function formatAgentCount(count) {
+  const value = Number(count) || 0;
+  if (state.locale === "zh") return `${formatNumber(value)} 个`;
+  return `${formatNumber(value)} ${value === 1 ? "agent" : "agents"}`;
 }
 
 function formatDate(value) {
@@ -1736,3 +2111,4 @@ function slugify(value) {
 }
 
 render();
+loadHotProjects();

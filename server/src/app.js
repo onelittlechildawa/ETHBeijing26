@@ -2,6 +2,7 @@ import "./services/env.js";
 import express from "express";
 import cors from "cors";
 import { analyzeToken } from "./services/analyzer.js";
+import { getHotProjects, refreshHotProjects } from "./services/hotProjects.js";
 import { analyzeProject } from "./services/projectAnalyzer.js";
 import { requestProjectOpenAI } from "./services/openai.js";
 import { SUPPORTED_CHAINS } from "./services/chains.js";
@@ -26,6 +27,9 @@ app.get("/api/chains", (_req, res) => {
 app.get("/api/analyze", analyzeHandler);
 app.post("/api/analyze", analyzeHandler);
 app.post("/api/project/analyze", projectAnalyzeHandler);
+app.post("/api/project/analyze/stream", projectAnalyzeStreamHandler);
+app.get("/api/hot-projects", hotProjectsHandler);
+app.get("/api/cron/hot-projects", hotProjectsCronHandler);
 app.post("/api/openai/project", openAIProjectHandler);
 
 async function analyzeHandler(req, res) {
@@ -77,6 +81,96 @@ async function projectAnalyzeHandler(req, res) {
     res.status(500).json({
       error: "PROJECT_ANALYSIS_FAILED",
       message: "ChainLens could not complete this project analysis.",
+      detail: process.env.NODE_ENV === "production" ? undefined : error.message
+    });
+  }
+}
+
+async function projectAnalyzeStreamHandler(req, res) {
+  const query = String(req.body?.query || req.body?.name || req.body?.website || req.body?.address || "").trim();
+  if (!query) {
+    return res.status(400).json({
+      error: "INVALID_PROJECT_INPUT",
+      message: "Provide a project name, website, or at least one contract address."
+    });
+  }
+
+  res.status(200);
+  res.setHeader("content-type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("cache-control", "no-cache, no-transform");
+  res.setHeader("x-accel-buffering", "no");
+  res.flushHeaders?.();
+
+  const send = (payload) => {
+    if (res.writableEnded) return;
+    res.write(`${JSON.stringify(payload)}\n`);
+  };
+
+  try {
+    const report = await analyzeProject(req.body || {}, {
+      onProgress: (progress) => send({ type: "progress", progress })
+    });
+    send({ type: "report", report });
+    res.end();
+  } catch (error) {
+    console.error(error);
+    send({
+      type: "error",
+      error: {
+        message: "ChainLens could not complete this project analysis.",
+        detail: process.env.NODE_ENV === "production" ? undefined : error.message
+      }
+    });
+    res.end();
+  }
+}
+
+async function hotProjectsHandler(req, res) {
+  try {
+    const digest = await getHotProjects({
+      chainId: req.query?.chainId,
+      dex: req.query?.dex,
+      limit: req.query?.limit
+    });
+    res.json(digest);
+  } catch (error) {
+    console.error(error);
+    res.status(503).json({
+      error: "HOT_PROJECTS_UNAVAILABLE",
+      message: "ChainLens could not load the hot projects digest.",
+      detail: process.env.NODE_ENV === "production" ? undefined : error.message
+    });
+  }
+}
+
+async function hotProjectsCronHandler(req, res) {
+  const expected = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : null;
+  if (!expected || req.get("authorization") !== expected) {
+    return res.status(401).json({
+      error: "UNAUTHORIZED",
+      message: "Hot projects cron requires a valid CRON_SECRET bearer token."
+    });
+  }
+
+  try {
+    const digest = await refreshHotProjects({
+      chainId: req.query?.chainId,
+      dex: req.query?.dex,
+      limit: req.query?.limit
+    });
+    res.json({
+      ok: true,
+      generatedAt: digest.generatedAt,
+      sourceStatus: digest.sourceStatus,
+      candidateCount: digest.candidateCount,
+      itemCount: digest.items.length,
+      storage: digest.storage
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "HOT_PROJECTS_REFRESH_FAILED",
+      message: "ChainLens could not refresh hot projects.",
       detail: process.env.NODE_ENV === "production" ? undefined : error.message
     });
   }

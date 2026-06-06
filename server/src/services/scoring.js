@@ -252,8 +252,11 @@ function holderSignals(token) {
 function liquiditySignals(token, pair) {
   const signals = [];
   const liquidityUsd = toNumber(pair?.liquidity?.usd);
+  const fdv = toNumber(pair?.fdv);
+  const holderCount = toNumber(token?.holder_count);
   const lpHolders = Array.isArray(token?.lp_holders) ? token.lp_holders : [];
   const lpTotal = toNumber(token?.lp_total_supply);
+  const matureLiquidToken = isMatureLiquidToken({ holderCount, liquidityUsd, fdv });
   const lockedLp = lpHolders
     .filter((holder) => holder.is_locked === 1 || holder.is_locked === "1" || isBurnAddress(holder.address))
     .reduce((sum, holder) => sum + holderPercent(holder), 0);
@@ -280,11 +283,15 @@ function liquiditySignals(token, pair) {
   if (lpHolders.length && lockedLp < 50) {
     signals.push(makeSignal({
       dimension: "liquidity",
-      signal: "LP appears mostly unlocked",
-      severity: "high",
-      confidence: 0.82,
-      evidence: `Locked or burned LP share estimated at ${formatPercent(lockedLp)}`,
-      context: "Unlocked LP can often be withdrawn, which may remove market liquidity."
+      signal: matureLiquidToken ? "LP lock data needs context" : "LP appears mostly unlocked",
+      severity: matureLiquidToken ? "low" : "high",
+      confidence: matureLiquidToken ? 0.68 : 0.82,
+      evidence: matureLiquidToken
+        ? `Locked or burned LP share estimated at ${formatPercent(lockedLp)}; holder count ${formatCompactNumber(holderCount)}, liquidity ${formatOptionalUsd(liquidityUsd)}, FDV ${formatOptionalUsd(fdv)}`
+        : `Locked or burned LP share estimated at ${formatPercent(lockedLp)}`,
+      context: matureLiquidToken
+        ? "For established, liquid tokens, one pool's LP lock data is a weak warning by itself. Check pool controls if this pair is the main exit route."
+        : "Unlocked LP can often be withdrawn, which may remove market liquidity."
     }));
   }
 
@@ -315,6 +322,15 @@ function liquiditySignals(token, pair) {
   }
 
   return signals;
+}
+
+function isMatureLiquidToken({ holderCount, liquidityUsd, fdv }) {
+  return holderCount !== null &&
+    holderCount >= 10000 &&
+    (
+      (liquidityUsd !== null && liquidityUsd >= 1_000_000) ||
+      (fdv !== null && fdv >= 100_000_000)
+    );
 }
 
 function buildMetrics(token, pair) {
@@ -562,6 +578,18 @@ function formatUsd(value) {
     currency: "USD",
     maximumFractionDigits: 0
   }).format(Number(value || 0));
+}
+
+function formatOptionalUsd(value) {
+  return value === null ? "unknown" : formatUsd(value);
+}
+
+function formatCompactNumber(value) {
+  if (value === null) return "unknown";
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(Number(value));
 }
 
 function firstValue(...values) {

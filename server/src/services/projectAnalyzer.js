@@ -8,27 +8,92 @@ import { classifyContractScope, isTokenModelExcluded } from "./projectScope.js";
 
 const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
 const MAX_CONTRACT_TARGETS = 12;
+const PROJECT_ANALYSIS_PROGRESS_STEPS = [
+  "normalize",
+  "input_evidence",
+  "contract_analysis",
+  "project_evidence",
+  "contract_refresh",
+  "scoring",
+  "ai_review",
+  "agent_review",
+  "report"
+];
+const PROJECT_ANALYSIS_PROGRESS_LABELS = {
+  normalize: "Normalize input",
+  input_evidence: "Collect supplied evidence",
+  contract_analysis: "Analyze contract targets",
+  project_evidence: "Expand project evidence",
+  contract_refresh: "Refresh discovered contracts",
+  scoring: "Score findings",
+  ai_review: "Run analyst review",
+  agent_review: "Coordinate agent review",
+  report: "Assemble report"
+};
 const NARRATIVE_LANGUAGE_PATTERNS = [
-  { label: "future or revolution language", pattern: /\b(future of|revolutioni[sz]e|revolutionary|disrupt|transform|next[- ]generation|redefine)\b/i },
-  { label: "superlative positioning", pattern: /\b(leading|world[- ]class|best[- ]in[- ]class|cutting[- ]edge|breakthrough|game[- ]changing|ultimate)\b/i },
-  { label: "growth or reward promises", pattern: /\b(unlock|empower|mass adoption|passive income|yield|rewards?|airdrop|guaranteed|risk[- ]free|100x|moon)\b/i },
-  { label: "trend-heavy labels", pattern: /\b(ai[- ]powered|ai agent|depin|rwa|metaverse|gamefi|socialfi)\b/i },
-  { label: "Chinese vision or promotion terms", pattern: /叙事|愿景|赋能|革命|颠覆|下一代|重新定义|引领|打造|生态|空投|收益|稳赚|无风险|百倍|万倍|爆发/i }
+  {
+    label: "future or revolution language",
+    category: "vision",
+    claim: "Vision-heavy language",
+    question: "What live product, usage, or deployed contract proves the vision is already shipping?",
+    pattern: /\b(future of|revolutioni[sz]e|revolutionary|disrupt|transform|next[- ]generation|redefine)\b/i
+  },
+  {
+    label: "superlative positioning",
+    category: "positioning",
+    claim: "Market-leading positioning",
+    question: "Which independent metric, user base, or production evidence supports the positioning?",
+    pattern: /\b(leading|world[- ]class|best[- ]in[- ]class|cutting[- ]edge|breakthrough|game[- ]changing|ultimate)\b/i
+  },
+  {
+    label: "growth or reward promises",
+    category: "rewards",
+    claim: "Reward or growth promise",
+    question: "Where do the rewards, yield, or growth claims come from after incentives are removed?",
+    pattern: /\b(unlock|empower|mass adoption|passive income|yield|rewards?|airdrop|guaranteed|risk[- ]free|100x|moon)\b/i
+  },
+  {
+    label: "trend-heavy labels",
+    category: "trend",
+    claim: "Trend label",
+    question: "Is the AI, DePIN, RWA, GameFi, or SocialFi label tied to a reproducible implementation?",
+    pattern: /\b(ai[- ]powered|ai agent|depin|rwa|metaverse|gamefi|socialfi)\b/i
+  },
+  {
+    label: "decentralization claims",
+    category: "decentralization",
+    claim: "Decentralization claim",
+    question: "Who controls admin keys, upgrades, treasury movement, frontends, and governance execution?",
+    pattern: /\b(decentralized|trustless|permissionless|dao[- ]governed|community[- ]owned)\b|去中心化|无需信任|无需许可|社区治理|DAO 治理/i
+  },
+  {
+    label: "Chinese vision or promotion terms",
+    category: "promotion",
+    claim: "Promotional wording",
+    question: "Which verifiable artifact turns the promotional claim into shipped evidence?",
+    pattern: /叙事|愿景|赋能|革命|颠覆|下一代|重新定义|引领|打造|生态|空投|收益|稳赚|无风险|百倍|万倍|爆发/i
+  }
 ];
 const NARRATIVE_ARTIFACT_TYPES = new Set(["web_page", "whitepaper", "docs", "web_search"]);
 
-export async function analyzeProject(input) {
+export async function analyzeProject(input, options = {}) {
+  const progress = createProjectProgressReporter(options.onProgress);
+  progress("normalize");
   const seed = normalizeProjectInput(input);
+  progress("input_evidence");
   const inputEvidence = await collectProjectEvidence({ seed });
   let analysisSeed = enrichSeedWithEvidence(seed, inputEvidence);
+  progress("contract_analysis", `${analysisSeed.addresses.length} target${analysisSeed.addresses.length === 1 ? "" : "s"}`);
   let { rawTokenReports, contractProfiles } = await analyzeSeedTargets(analysisSeed);
   let tokenReports = applyScopeClassifications(analysisSeed, rawTokenReports, contractProfiles, inputEvidence);
   const draftProject = buildProjectProfile(analysisSeed, tokenReports, contractProfiles, inputEvidence);
+  progress("project_evidence", draftProject.name);
   let projectEvidence = await collectProjectEvidence({ seed: analysisSeed, project: draftProject, existingEvidence: inputEvidence });
   const finalSeed = enrichSeedWithEvidence(analysisSeed, projectEvidence);
 
   if (finalSeed.addresses.length !== analysisSeed.addresses.length) {
     analysisSeed = finalSeed;
+    progress("contract_refresh", `${analysisSeed.addresses.length} target${analysisSeed.addresses.length === 1 ? "" : "s"}`);
     ({ rawTokenReports, contractProfiles } = await analyzeSeedTargets(analysisSeed));
   } else {
     analysisSeed = finalSeed;
@@ -36,11 +101,14 @@ export async function analyzeProject(input) {
 
   tokenReports = applyScopeClassifications(analysisSeed, rawTokenReports, contractProfiles, projectEvidence);
   const project = buildProjectProfile(analysisSeed, tokenReports, contractProfiles, projectEvidence);
+  progress("scoring", project.name);
   const localFindings = buildLocalFindings(analysisSeed, tokenReports, project, contractProfiles, projectEvidence);
+  progress("ai_review", `${localFindings.length} local finding${localFindings.length === 1 ? "" : "s"}`);
   const openai = await requestProjectOpenAI({ project, tokenReports, localFindings, researchEvidence: projectEvidence });
   const adjudicated = adjudicateFindings(localFindings, openai.findingReviews);
   const summary = summarizeProject(adjudicated.activeFindings, tokenReports);
   const dimensions = buildProjectDimensions(adjudicated.activeFindings, tokenReports);
+  progress("agent_review", `${adjudicated.activeFindings.length} active finding${adjudicated.activeFindings.length === 1 ? "" : "s"}`);
   const agents = await buildAgents({
     project,
     tokenReports,
@@ -55,6 +123,17 @@ export async function analyzeProject(input) {
   });
   const recommendations = extractAgentRecommendations(agents);
   const summaryActions = buildSummaryActions({ summary, recommendations, findings: adjudicated.activeFindings });
+  const skepticReview = buildSkepticReview({
+    project,
+    tokenReports,
+    findings: adjudicated.activeFindings,
+    projectEvidence,
+    contractProfiles,
+    agents,
+    recommendations,
+    summary
+  });
+  progress("report", `${agents.length} agent${agents.length === 1 ? "" : "s"}`);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -64,6 +143,7 @@ export async function analyzeProject(input) {
       actions: summaryActions
     },
     dimensions,
+    skepticReview,
     agents,
     recommendations,
     findings: adjudicated.activeFindings,
@@ -79,6 +159,30 @@ export async function analyzeProject(input) {
     projectEvidence,
     contractProfiles,
     sources: buildSources(tokenReports, contractProfiles, openai, projectEvidence, agents)
+  };
+}
+
+function createProjectProgressReporter(onProgress) {
+  if (typeof onProgress !== "function") return () => {};
+  const startedAt = Date.now();
+
+  return (id, detail = "") => {
+    const index = PROJECT_ANALYSIS_PROGRESS_STEPS.indexOf(id);
+    const step = index >= 0 ? index + 1 : 0;
+    try {
+      onProgress({
+        id,
+        label: PROJECT_ANALYSIS_PROGRESS_LABELS[id] || id,
+        detail,
+        step,
+        total: PROJECT_ANALYSIS_PROGRESS_STEPS.length,
+        percent: step ? Math.round((step / PROJECT_ANALYSIS_PROGRESS_STEPS.length) * 100) : 0,
+        elapsedMs: Date.now() - startedAt,
+        at: new Date().toISOString()
+      });
+    } catch {
+      // Progress reporting is best-effort and must not interrupt analysis.
+    }
   };
 }
 
@@ -480,6 +584,165 @@ function buildNarrativeDeliveryFinding({ researchArtifacts, researchSurfaces, to
   });
 }
 
+function buildSkepticReview({ project, tokenReports, findings, projectEvidence, contractProfiles, agents, recommendations, summary }) {
+  const researchArtifacts = projectEvidence?.artifacts || [];
+  const researchSurfaces = projectEvidence?.surfaces || {};
+  const narrative = assessNarrativeLanguage(researchArtifacts);
+  const delivery = assessDeliveryEvidence({
+    researchArtifacts,
+    researchSurfaces,
+    tokenReports,
+    contractProfiles,
+    projectEvidence
+  });
+  const counts = countSeverity(findings);
+  const hypePressure = buildHypePressure(narrative, delivery);
+  const evidenceCoverage = buildEvidenceCoverage(delivery, projectEvidence, project, contractProfiles);
+  const claimAudit = buildClaimAudit(narrative, delivery);
+  const verdict = skepticVerdict({ counts, hypePressure, evidenceCoverage, findings, summary });
+  const materialAgents = (agents || [])
+    .filter((agent) => agent.id !== "recommendation-agent")
+    .map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      status: agent.status,
+      summary: agent.summary,
+      confidence: agent.confidence,
+      evidenceCount: agent.evidenceCount
+    }));
+
+  return {
+    verdict,
+    headline: skepticHeadline(verdict, project),
+    hypePressure,
+    evidenceCoverage,
+    claimAudit,
+    nextQuestions: buildSkepticQuestions({ delivery, recommendations, findings }).slice(0, 5),
+    agentReview: {
+      status: agentReviewStatus(agents),
+      summaries: materialAgents,
+      recommendationCount: recommendations?.length || 0
+    }
+  };
+}
+
+function buildHypePressure(narrative, delivery) {
+  const score = Math.max(0, Math.min(100, Math.round(
+    narrative.matchCount * 16 +
+    (delivery.score < 2 ? 18 : 0) +
+    (delivery.missing.length * 5)
+  )));
+  return {
+    score,
+    level: score >= 70 ? "high" : score >= 38 ? "medium" : "low",
+    signalCount: narrative.matchCount,
+    signals: narrative.samples,
+    categories: narrative.categories
+  };
+}
+
+function buildEvidenceCoverage(delivery, projectEvidence, project, contractProfiles) {
+  const maxScore = 5.5;
+  const score = Math.max(0, Math.min(100, Math.round((delivery.score / maxScore) * 100)));
+  const strengths = [
+    delivery.contractBinding ? "Contract evidence is attached" : null,
+    delivery.hasVerifiedContract ? "Verified contract source was confirmed" : null,
+    delivery.hasActiveRepo ? "Active repository evidence was collected" : null,
+    delivery.hasAudit ? "Audit surface was collected" : null,
+    delivery.hasGovernance ? "Governance surface was collected" : null,
+    delivery.hasDocs ? "Documentation surface was collected" : null,
+    project?.website ? "Official website or inferred project surface is attached" : null,
+    contractProfiles?.length ? `${contractProfiles.length} contract profile check${contractProfiles.length === 1 ? "" : "s"} completed` : null,
+    projectEvidence?.artifactCount ? `${projectEvidence.artifactCount} project evidence artifact${projectEvidence.artifactCount === 1 ? "" : "s"} collected` : null
+  ].filter(Boolean);
+
+  return {
+    score,
+    level: score >= 70 ? "strong" : score >= 40 ? "partial" : "thin",
+    strengths: strengths.slice(0, 5),
+    gaps: delivery.missing
+  };
+}
+
+function buildClaimAudit(narrative, delivery) {
+  const claims = narrative.matches.length
+    ? narrative.matches
+    : [
+        {
+          category: "baseline",
+          claim: "Project claims",
+          sample: "No strong marketing pattern detected in collected surfaces",
+          question: "Can the project still bind its identity, contracts, docs, repository, audit, and governance surfaces?"
+        }
+      ];
+  const support = delivery.strengths;
+  const gaps = delivery.missing;
+
+  return claims.slice(0, 5).map((claim) => ({
+    category: claim.category,
+    claim: claim.claim,
+    sample: claim.sample,
+    support: support.slice(0, 3),
+    gaps: gaps.slice(0, 3),
+    question: claim.question
+  }));
+}
+
+function skepticVerdict({ counts, hypePressure, evidenceCoverage, findings, summary }) {
+  const hasMaterialTokenRisk = counts.critical > 0 || counts.high >= 2 || summary?.level === "high";
+  const deliveryGap = findings.some((finding) => finding.dimension === "delivery" && ["critical", "high", "medium"].includes(finding.severity));
+
+  if (hasMaterialTokenRisk) return "needs_human_review";
+  if (deliveryGap || (hypePressure.level === "high" && evidenceCoverage.level !== "strong")) return "narrative_outpaces_evidence";
+  if (evidenceCoverage.level === "thin") return "evidence_incomplete";
+  if (hypePressure.level === "medium" && evidenceCoverage.level === "partial") return "claims_need_mapping";
+  return "evidence_backed";
+}
+
+function skepticHeadline(verdict, project) {
+  const name = project?.name || "This project";
+  return {
+    needs_human_review: `${name} has material risk signals that need human review before relying on it.`,
+    narrative_outpaces_evidence: `${name}'s story currently runs ahead of the evidence ChainLens could verify.`,
+    evidence_incomplete: `${name} needs more official evidence before its claims can be judged fairly.`,
+    claims_need_mapping: `${name} has some evidence, but key claims still need to be mapped to shipped artifacts.`,
+    evidence_backed: `${name} has a comparatively stronger evidence trail in the collected data.`
+  }[verdict] || `${name} needs evidence-first review.`;
+}
+
+function buildSkepticQuestions({ delivery, recommendations = [], findings = [] }) {
+  const questions = delivery.missing.map(questionForEvidenceGap);
+  questions.push(...recommendations.map((item) => item.action || item.title).filter(Boolean));
+
+  const materialFinding = findings.find((finding) => ["critical", "high"].includes(finding.severity));
+  if (materialFinding) {
+    questions.unshift("Ask the team to explain how the highest-risk finding is mitigated and where that proof is documented.");
+  }
+
+  if (!questions.length) {
+    questions.push("Can the project keep its evidence trail reproducible through official docs, repositories, audits, governance, and verified contracts?");
+  }
+
+  return uniqueText(questions).slice(0, 6);
+}
+
+function questionForEvidenceGap(gap) {
+  const value = String(gap || "");
+  if (value.includes("verified contract source")) return "Ask the team for the verified contract source.";
+  if (value.includes("active official repository")) return "Ask where the official code repository is and whether it is still maintained.";
+  if (value.includes("independent audit")) return "Ask for an independent audit report with matching contract addresses.";
+  if (value.includes("governance")) return "Ask who controls upgrades, admin keys, treasury movement, and governance decisions.";
+  if (value.includes("contract address")) return "Ask for the official contract address from the project website or docs.";
+  return `Ask the team to explain this missing evidence: ${value}.`;
+}
+
+function agentReviewStatus(agents = []) {
+  if (!agents.length) return "empty";
+  if (agents.some((agent) => agent.status === "error")) return "partial";
+  if (agents.some((agent) => agent.status === "partial" || agent.status === "not_configured")) return "partial";
+  return "ok";
+}
+
 function assessNarrativeLanguage(artifacts = []) {
   const matches = [];
   for (const artifact of artifacts.filter((item) => NARRATIVE_ARTIFACT_TYPES.has(item.type))) {
@@ -489,8 +752,12 @@ function assessNarrativeLanguage(artifacts = []) {
       if (item.pattern.test(text)) {
         matches.push({
           label: item.label,
+          category: item.category,
+          claim: item.claim,
+          question: item.question,
           title: artifact.title || artifact.type,
-          url: artifact.url
+          url: artifact.url,
+          sample: `${item.claim} in ${artifact.title || artifact.type}`
         });
       }
     }
@@ -506,6 +773,8 @@ function assessNarrativeLanguage(artifacts = []) {
 
   return {
     matchCount: uniqueMatches.length,
+    matches: uniqueMatches,
+    categories: uniqueText(uniqueMatches.map((match) => match.category)),
     samples: uniqueMatches
       .slice(0, 3)
       .map((match) => `${match.label} in ${match.title}`)
@@ -538,7 +807,21 @@ function assessDeliveryEvidence({ researchArtifacts = [], researchSurfaces = {},
   return {
     score,
     missing,
-    contractBinding
+    strengths: [
+      contractBinding ? "contract binding" : null,
+      hasVerifiedContract ? "verified contract source" : null,
+      hasActiveRepo ? "active repository" : null,
+      hasAudit ? "audit surface" : null,
+      hasGovernance ? "governance surface" : null,
+      hasDocs ? "docs surface" : null
+    ].filter(Boolean),
+    contractBinding,
+    hasVerifiedContract,
+    hasActiveRepo,
+    hasAudit,
+    hasGovernance,
+    hasDocs,
+    hasRepoSurface
   };
 }
 
@@ -863,4 +1146,17 @@ function isGenericName(name) {
 
 function unique(values) {
   return [...new Set(values.map((value) => String(value).toLowerCase()))];
+}
+
+function uniqueText(values) {
+  const seen = new Set();
+  return values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value) => {
+      const key = value.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }

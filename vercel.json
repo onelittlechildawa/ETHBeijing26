@@ -7,6 +7,12 @@
       "maxDuration": 300
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/hot-projects",
+      "schedule": "0 1 * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/health",

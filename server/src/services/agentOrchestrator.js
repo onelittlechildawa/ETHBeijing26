@@ -354,8 +354,8 @@ async function buildRecommendationAgent(context) {
   const aiResult = await requestRecommendationAI(context, fallbackRecommendations);
   const aiRecommendations = normalizeRecommendations(aiResult.payload?.recommendations);
   const recommendations = dedupeRecommendations([
-    ...aiRecommendations,
-    ...fallbackRecommendations
+    ...fallbackRecommendations,
+    ...aiRecommendations
   ]).sort(sortRecommendation).slice(0, 5);
   const status = recommendations.length ? "ok" : normalizeStatus(aiResult.status, "partial");
 
