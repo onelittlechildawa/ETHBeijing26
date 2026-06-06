@@ -2,6 +2,7 @@ import { cached } from "./cache.js";
 import { getChain } from "./chains.js";
 import { isBurnAddress } from "./knownAddresses.js";
 import { requestWebResearchAI } from "./openai.js";
+import { requestXapiSearch } from "./xapi.js";
 
 const TTL_MS = 30 * 60 * 1000;
 const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
@@ -553,54 +554,48 @@ function githubCodeSearchUrl(addresses) {
 async function collectXapiSearchEvidence(name) {
   const query = meaningfulName(name);
   if (!query) return { artifact: null, source: null };
-  if (!process.env.XAPI_API_KEY) {
-    return {
-      artifact: null,
-      source: {
-        name: "xAPI Search",
-        status: "disabled",
-        message: "Set XAPI_API_KEY and XAPI_SEARCH_URL to enable external web search."
-      }
-    };
-  }
-  if (!process.env.XAPI_SEARCH_URL) {
-    return {
-      artifact: null,
-      source: {
-        name: "xAPI Search",
-        status: "empty",
-        message: "XAPI_API_KEY is configured, but XAPI_SEARCH_URL is not set."
-      }
-    };
-  }
 
   try {
-    const response = await fetchWithTimeout(process.env.XAPI_SEARCH_URL, {
-      method: "POST",
-      timeoutMs: 16000,
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        authorization: `Bearer ${process.env.XAPI_API_KEY}`,
-        "user-agent": "ChainLens/0.1"
-      },
-      body: JSON.stringify({ query, limit: 5 })
-    });
-    const raw = await response.json();
-    const results = normalizeSearchResults(raw);
+    const limit = searchResultLimit();
+    const result = await requestXapiSearch({ query, limit });
+    if (result.status !== "ok") {
+      return {
+        artifact: null,
+        source: {
+          name: "xAPI Search",
+          status: result.status,
+          message: result.message
+        }
+      };
+    }
+
+    const results = normalizeSearchResults(result.raw).slice(0, limit);
+    const sourceUrl = result.actionId ? `${result.url}#${result.actionId}` : result.url;
     return {
       artifact: normalizeArtifact({
         type: "web_search",
         title: `xAPI search results for ${query}`,
-        url: process.env.XAPI_SEARCH_URL,
+        url: sourceUrl,
         status: results.length ? "candidate" : "empty",
         summary: results.length ? `xAPI returned ${results.length} candidate public surfaces.` : "xAPI search returned no candidates.",
         excerpts: results.map((item) => `${item.title || item.url}: ${item.snippet || ""}`),
-        facts: { results },
+        facts: {
+          provider: result.provider,
+          actionId: result.actionId || null,
+          results
+        },
         addresses: extractAddresses(JSON.stringify(results)),
-        links: results.map((item) => ({ type: categorizeSurface(item.url), label: item.title || "Search result", url: item.url }))
+        links: results.map((item) => ({
+          type: categorizeSurface(`${item.url} ${item.title || ""}`),
+          label: item.title || "Search result",
+          url: item.url
+        }))
       }),
-      source: { name: "xAPI Search", status: results.length ? "candidate" : "empty" }
+      source: {
+        name: "xAPI Search",
+        status: results.length ? "candidate" : "empty",
+        url: sourceUrl
+      }
     };
   } catch (error) {
     return {
@@ -898,18 +893,45 @@ function selectExcerpts(text, count = 4) {
 }
 
 function normalizeSearchResults(raw) {
-  const candidates = Array.isArray(raw?.results) ? raw.results
-    : Array.isArray(raw?.data) ? raw.data
-      : Array.isArray(raw?.items) ? raw.items
-        : [];
+  const candidates = firstSearchResultArray(raw);
   return candidates
     .map((item) => ({
-      title: item.title || item.name || item.label || null,
-      url: normalizeEvidenceUrl(item.url || item.link || item.href),
-      snippet: item.snippet || item.description || item.text || ""
+      title: item.title || item.name || item.label || item.heading || null,
+      url: normalizeEvidenceUrl(item.url || item.link || item.href || item.sourceUrl || item.displayed_link),
+      snippet: item.snippet || item.description || item.text || item.content || item.summary || item.body || item.excerpt || ""
     }))
     .filter((item) => item.url)
     .slice(0, 8);
+}
+
+function firstSearchResultArray(value, seen = new Set()) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "object") return [];
+  if (seen.has(value)) return [];
+  seen.add(value);
+
+  const direct = [
+    value.results,
+    value.data,
+    value.items,
+    value.organic_results,
+    value.organic,
+    value.webPages?.value
+  ].find((candidate) => Array.isArray(candidate));
+  if (direct) return direct;
+
+  for (const key of ["data", "payload", "result", "response", "body"]) {
+    const nested = firstSearchResultArray(value[key], seen);
+    if (nested.length) return nested;
+  }
+  return [];
+}
+
+function searchResultLimit() {
+  const limit = Number(process.env.XAPI_SEARCH_LIMIT || 5);
+  if (!Number.isFinite(limit)) return 5;
+  return Math.max(1, Math.min(8, Math.round(limit)));
 }
 
 async function githubJson(path) {
