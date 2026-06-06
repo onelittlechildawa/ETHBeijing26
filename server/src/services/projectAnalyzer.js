@@ -6,7 +6,6 @@ import { requestProjectOpenAI } from "./openai.js";
 import { collectProjectEvidence } from "./projectEvidence.js";
 import { classifyContractScope, isTokenModelExcluded } from "./projectScope.js";
 import { createReportCredential } from "./reportCredential.js";
-import { buildReportLocalization } from "./reportLocalization.js";
 
 const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
 const MAX_CONTRACT_TARGETS = 12;
@@ -19,7 +18,6 @@ const PROJECT_ANALYSIS_PROGRESS_STEPS = [
   "scoring",
   "ai_review",
   "agent_review",
-  "localization",
   "report"
 ];
 const PROJECT_ANALYSIS_PROGRESS_LABELS = {
@@ -31,7 +29,6 @@ const PROJECT_ANALYSIS_PROGRESS_LABELS = {
   scoring: "Score findings",
   ai_review: "Run analyst review",
   agent_review: "Coordinate agent review",
-  localization: "Prepare bilingual report text",
   report: "Assemble report"
 };
 const NARRATIVE_LANGUAGE_PATTERNS = [
@@ -143,8 +140,6 @@ export async function analyzeProject(input, options = {}) {
     recommendations,
     summary
   });
-  progress("localization", `${agents.length} agent${agents.length === 1 ? "" : "s"}`);
-
   const report = {
     generatedAt: new Date().toISOString(),
     project,
@@ -170,8 +165,7 @@ export async function analyzeProject(input, options = {}) {
     contractProfiles,
     sources: buildSources(tokenReports, contractProfiles, openai, projectEvidence, agents)
   };
-  report.localized = await buildReportLocalization(report);
-  progress("report", report.localized?.zh?.status || "ready");
+  progress("report", "ready");
   report.credential = await createReportCredential(report);
 
   return report;

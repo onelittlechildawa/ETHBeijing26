@@ -124,7 +124,6 @@ const messages = {
     progressScoring: "Score findings",
     progressAiReview: "Run analyst review",
     progressAgentReview: "Coordinate agent review",
-    progressLocalization: "Prepare Chinese and English report text",
     progressReport: "Assemble report",
     queryRequired: "Enter a project, website, or contract address.",
     projectFindings: "Project findings",
@@ -307,7 +306,6 @@ const messages = {
     progressScoring: "计算风险发现",
     progressAiReview: "运行分析员复核",
     progressAgentReview: "协调 AI 复核",
-    progressLocalization: "准备中英文结果",
     progressReport: "生成报告",
     queryRequired: "请输入项目、官网或合约地址。",
     projectFindings: "发现的问题",
@@ -2412,7 +2410,6 @@ function localizeProgressLabel(progress) {
     scoring: "progressScoring",
     ai_review: "progressAiReview",
     agent_review: "progressAgentReview",
-    localization: "progressLocalization",
     report: "progressReport"
   }[progress?.id];
   return key ? t(key) : progress?.label || "";
