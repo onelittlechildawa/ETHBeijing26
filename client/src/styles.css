@@ -40,7 +40,7 @@ button {
 }
 
 .shell {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1500px, calc(100% - 48px));
   margin: 0 auto;
   padding: 32px 0 48px;
 }
@@ -49,7 +49,6 @@ button {
 .empty-state,
 .score-panel,
 .token-panel,
-.radar-panel,
 .signals-panel,
 .sources-panel,
 .asset-panel,
@@ -660,7 +659,7 @@ p {
 
 .report-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.15fr) minmax(280px, 0.95fr);
+  grid-template-columns: minmax(280px, 0.85fr) repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 16px;
 }
@@ -671,8 +670,8 @@ p {
 
 .score-panel,
 .token-panel,
+.credential-panel,
 .skeptic-panel,
-.radar-panel,
 .signals-panel,
 .asset-panel,
 .review-panel,
@@ -803,8 +802,25 @@ p {
   border-color: #a7f3d0;
 }
 
+.score-panel {
+  grid-row: span 2;
+}
+
 .token-panel {
-  grid-column: span 2;
+  grid-column: span 3;
+}
+
+.credential-panel {
+  grid-column: 1 / -1;
+  border-color: #bfdbfe;
+  background: #f8fbff;
+  box-shadow: inset 4px 0 0 #2563eb, 0 18px 48px rgba(15, 23, 42, 0.06);
+}
+
+.credential-panel.credential-attested {
+  border-color: #a7f3d0;
+  background: #f7fffb;
+  box-shadow: inset 4px 0 0 #16a34a, 0 18px 48px rgba(15, 23, 42, 0.06);
 }
 
 .skeptic-panel {
@@ -970,6 +986,51 @@ p {
   gap: 10px;
 }
 
+.credential-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.credential-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.credential-success {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #047857;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.credential-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.credential-tx {
+  display: block;
+  margin-top: 12px;
+  padding: 10px;
+  color: #334155;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
 .metric {
   padding: 14px;
   border: 1px solid #e2e8f0;
@@ -1061,19 +1122,6 @@ p {
   font-size: 13px;
   line-height: 1.45;
   overflow-wrap: anywhere;
-}
-
-.radar-panel {
-  min-height: 330px;
-  height: 330px;
-  overflow: hidden;
-}
-
-.radar-panel canvas {
-  display: block;
-  width: 100% !important;
-  max-width: 100% !important;
-  height: 260px !important;
 }
 
 .signals-panel {
@@ -1864,6 +1912,7 @@ p {
   }
 
   .token-panel,
+  .credential-panel,
   .signals-panel,
   .asset-panel,
   .review-panel,
@@ -1875,7 +1924,12 @@ p {
     grid-column: auto;
   }
 
+  .score-panel {
+    grid-row: auto;
+  }
+
   .metric-grid,
+  .credential-grid,
   .agent-grid,
   .hot-projects-grid,
   .signal-preview,
@@ -1897,7 +1951,7 @@ p {
   .empty-state,
   .score-panel,
   .token-panel,
-  .radar-panel,
+  .credential-panel,
   .signals-panel,
   .asset-panel,
   .review-panel,
@@ -1934,15 +1988,6 @@ p {
     font-size: 15px;
   }
 
-  .radar-panel {
-    height: 310px;
-    min-height: 310px;
-  }
-
-  .radar-panel canvas {
-    height: 240px !important;
-  }
-
   .brand-row,
   .panel-heading,
   .score-topline,
@@ -1973,6 +2018,7 @@ p {
   }
 
   .metric-grid,
+  .credential-grid,
   .agent-grid,
   .hot-projects-grid,
   .signal-preview,

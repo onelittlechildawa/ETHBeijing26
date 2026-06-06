@@ -19,11 +19,13 @@ Create a local `.env` for server-only secrets:
 OPENAI_BASE_URL=https://opencode.ai/zen/go/v1
 OPENAI_API_KEY=replace_with_a_rotated_key
 OPENAI_MODEL=glm-5.1
+DEEPLX_API_URL=https://api.deeplx.org/replace_with_key/translate
 ```
 
-`OPENAI_API_KEY` is read only by the API server. Do not put it in client env vars, docs, demos, or committed files.
+`OPENAI_API_KEY` and `DEEPLX_API_URL` are read only by the API server. Do not put real keys in client env vars, docs, demos, or committed files.
 
-OpenAI-compatible credentials are used for synthesis only. ChainLens collects project evidence itself before the analyst step.
+OpenAI-compatible credentials are used for synthesis only. ChainLens collects project evidence itself before the analyst step. `OPENAI_BASE_URL` can be either the provider base URL or the full `/chat/completions` endpoint.
+DeepLX is used only to translate English report text when the UI is in Chinese.
 
 Optional search and repository credentials:
 
@@ -38,6 +40,23 @@ Optional daily hot project list:
 ```bash
 CRON_SECRET=replace_with_a_long_random_value
 BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
+```
+
+Optional report credential notary on Sepolia:
+
+```bash
+REPORT_NOTARY_CHAIN_ID=11155111
+REPORT_NOTARY_CHAIN_NAME=Sepolia
+REPORT_NOTARY_RPC_URL=https://...
+REPORT_NOTARY_PRIVATE_KEY=0x...
+REPORT_NOTARY_CONTRACT_ADDRESS=0x...
+REPORT_NOTARY_EXPLORER_BASE_URL=https://sepolia.etherscan.io
+```
+
+The notary private key must be a testnet-only issuer wallet. ChainLens writes only the report hash to the notary contract; report text stays off-chain. Deploy the contract after setting `REPORT_NOTARY_RPC_URL` and `REPORT_NOTARY_PRIVATE_KEY`:
+
+```bash
+npm run deploy:notary --workspace server
 ```
 
 Without xAPI, ChainLens still fetches user-provided websites, GitHub links, and PDF whitepapers. Set `XAPI_KEY` or `XAPI_API_KEY` to enable xAPI web search through `action.xapi.to` using `XAPI_SEARCH_ACTION` (defaults to `web.search`). `XAPI_SEARCH_URL` is still supported for legacy xapi.to-compatible endpoints.
@@ -60,6 +79,7 @@ OPENAI_BASE_URL=https://opencode.ai/zen/go/v1
 OPENAI_API_KEY=replace_with_a_rotated_key
 OPENAI_MODEL=glm-5.1
 OPENAI_TIMEOUT_MS=90000
+DEEPLX_API_URL=https://api.deeplx.org/replace_with_key/translate
 ```
 
 Optional:
@@ -95,6 +115,22 @@ curl "http://localhost:8787/api/analyze?chainId=1&address=0xa0b86991c6218b36c1d1
 curl -X POST "http://localhost:8787/api/project/analyze" \
   -H "content-type: application/json" \
   -d '{"chainId":"1","query":"Aave aave.com 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"}'
+```
+
+`POST /api/project/attest` writes a report hash to the configured Sepolia notary contract:
+
+```bash
+curl -X POST "http://localhost:8787/api/project/attest" \
+  -H "content-type: application/json" \
+  -d '{"report":{"generatedAt":"...","credential":{"reportHash":"0x..."}}}'
+```
+
+`POST /api/project/verify` checks whether a report hash is already attested:
+
+```bash
+curl -X POST "http://localhost:8787/api/project/verify" \
+  -H "content-type: application/json" \
+  -d '{"reportHash":"0x..."}'
 ```
 
 `GET /api/hot-projects` returns the latest API-backed hot project list:
@@ -137,6 +173,7 @@ The current workbench includes:
 - OpenAI-compatible project synthesis through `OPENAI_*` server env vars
 - Read-only EIP-1193 wallet exposure analysis for connected MetaMask/Rabby wallets
 - Local wallet/RPC evidence from `eth_call` and `eth_getLogs` for ERC-20 `balanceOf`, `allowance`, `Transfer`, and `Approval`
+- Optional Sepolia report credentials that notarize the deterministic ChainLens report hash without publishing report text
 
 ## Wallet Exposure
 
@@ -203,11 +240,13 @@ npm run dev
 OPENAI_BASE_URL=https://opencode.ai/zen/go/v1
 OPENAI_API_KEY=replace_with_a_rotated_key
 OPENAI_MODEL=glm-5.1
+DEEPLX_API_URL=https://api.deeplx.org/replace_with_key/translate
 ```
 
-`OPENAI_API_KEY` 仅供 API 服务端读取，不要放入客户端环境变量、文档、演示或已提交的文件中。
+`OPENAI_API_KEY` 和 `DEEPLX_API_URL` 仅供 API 服务端读取，不要把真实密钥放入客户端环境变量、文档、演示或已提交的文件中。
 
-OpenAI 兼容凭证仅用于综合评测。ChainLens 在分析步骤之前会自行收集项目证据。
+OpenAI 兼容凭证仅用于综合评测。ChainLens 在分析步骤之前会自行收集项目证据。`OPENAI_BASE_URL` 可以填 provider base URL，也可以填完整的 `/chat/completions` 地址。
+DeepLX 仅用于中文界面下把英文报告文本翻译成中文。
 
 可选搜索和仓库凭证：
 
@@ -222,6 +261,23 @@ XAPI_SEARCH_ACTION=web.search
 ```bash
 CRON_SECRET=replace_with_a_long_random_value
 BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
+```
+
+可选的 Sepolia 报告凭证：
+
+```bash
+REPORT_NOTARY_CHAIN_ID=11155111
+REPORT_NOTARY_CHAIN_NAME=Sepolia
+REPORT_NOTARY_RPC_URL=https://...
+REPORT_NOTARY_PRIVATE_KEY=0x...
+REPORT_NOTARY_CONTRACT_ADDRESS=0x...
+REPORT_NOTARY_EXPLORER_BASE_URL=https://sepolia.etherscan.io
+```
+
+notary 私钥只能使用测试网出具方钱包。ChainLens 只把报告 hash 写入凭证合约，报告正文不上链。设置 `REPORT_NOTARY_RPC_URL` 和 `REPORT_NOTARY_PRIVATE_KEY` 后部署合约：
+
+```bash
+npm run deploy:notary --workspace server
 ```
 
 即使没有 xAPI，ChainLens 仍会抓取用户提供的网站、GitHub 链接和 PDF 白皮书。设置 `XAPI_KEY` 或 `XAPI_API_KEY` 后，后端会默认通过 `action.xapi.to` 的 `web.search` 做外部网页搜索；`XAPI_SEARCH_URL` 仅用于兼容旧版 xapi.to 端点。
@@ -244,6 +300,7 @@ OPENAI_BASE_URL=https://opencode.ai/zen/go/v1
 OPENAI_API_KEY=replace_with_a_rotated_key
 OPENAI_MODEL=glm-5.1
 OPENAI_TIMEOUT_MS=90000
+DEEPLX_API_URL=https://api.deeplx.org/replace_with_key/translate
 ```
 
 可选：
@@ -279,6 +336,22 @@ curl "http://localhost:8787/api/analyze?chainId=1&address=0xa0b86991c6218b36c1d1
 curl -X POST "http://localhost:8787/api/project/analyze" \
   -H "content-type: application/json" \
   -d '{"chainId":"1","query":"Aave aave.com 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"}'
+```
+
+`POST /api/project/attest` 将报告 hash 写入配置好的 Sepolia 凭证合约：
+
+```bash
+curl -X POST "http://localhost:8787/api/project/attest" \
+  -H "content-type: application/json" \
+  -d '{"report":{"generatedAt":"...","credential":{"reportHash":"0x..."}}}'
+```
+
+`POST /api/project/verify` 检查某个报告 hash 是否已经上链：
+
+```bash
+curl -X POST "http://localhost:8787/api/project/verify" \
+  -H "content-type: application/json" \
+  -d '{"reportHash":"0x..."}'
 ```
 
 `GET /api/hot-projects` 返回最近一次由后端 API 生成的热门项目列表：
@@ -321,6 +394,7 @@ curl -X POST "http://localhost:8787/api/openai/project" \
 - 通过 `OPENAI_*` 服务端环境变量实现的 OpenAI 兼容项目综合评测
 - 对连接的 MetaMask/Rabby 钱包进行只读 EIP-1193 钱包敞口分析
 - 通过 `eth_call` 和 `eth_getLogs` 获取 ERC-20 `balanceOf`、`allowance`、`Transfer` 和 `Approval` 的本地钱包/RPC 证据
+- 可选 Sepolia 报告凭证：只公证 ChainLens 报告的确定性 hash，不公开报告正文
 
 ## 钱包敞口
 

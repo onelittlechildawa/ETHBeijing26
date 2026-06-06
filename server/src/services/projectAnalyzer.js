@@ -5,6 +5,7 @@ import { fetchContractProfiles } from "./contractSearch.js";
 import { requestProjectOpenAI } from "./openai.js";
 import { collectProjectEvidence } from "./projectEvidence.js";
 import { classifyContractScope, isTokenModelExcluded } from "./projectScope.js";
+import { createReportCredential } from "./reportCredential.js";
 
 const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
 const MAX_CONTRACT_TARGETS = 12;
@@ -105,8 +106,9 @@ export async function analyzeProject(input, options = {}) {
   const localFindings = buildLocalFindings(analysisSeed, tokenReports, project, contractProfiles, projectEvidence);
   progress("ai_review", `${localFindings.length} local finding${localFindings.length === 1 ? "" : "s"}`);
   const openai = await requestProjectOpenAI({ project, tokenReports, localFindings, researchEvidence: projectEvidence });
-  const adjudicated = adjudicateFindings(localFindings, openai.findingReviews);
-  const summary = summarizeProject(adjudicated.activeFindings, tokenReports);
+  const scoringFindings = mergeAiFindings(localFindings, openai.findings);
+  const adjudicated = adjudicateFindings(scoringFindings, openai.findingReviews);
+  let summary = summarizeProject(adjudicated.activeFindings, tokenReports);
   const dimensions = buildProjectDimensions(adjudicated.activeFindings, tokenReports);
   progress("agent_review", `${adjudicated.activeFindings.length} active finding${adjudicated.activeFindings.length === 1 ? "" : "s"}`);
   const agents = await buildAgents({
@@ -122,6 +124,11 @@ export async function analyzeProject(input, options = {}) {
     contractProfiles
   });
   const recommendations = extractAgentRecommendations(agents);
+  summary = applyAgentScoreAdjustment(summary, {
+    agents,
+    recommendations,
+    findings: adjudicated.activeFindings
+  });
   const summaryActions = buildSummaryActions({ summary, recommendations, findings: adjudicated.activeFindings });
   const skepticReview = buildSkepticReview({
     project,
@@ -135,7 +142,7 @@ export async function analyzeProject(input, options = {}) {
   });
   progress("report", `${agents.length} agent${agents.length === 1 ? "" : "s"}`);
 
-  return {
+  const report = {
     generatedAt: new Date().toISOString(),
     project,
     summary: {
@@ -160,6 +167,9 @@ export async function analyzeProject(input, options = {}) {
     contractProfiles,
     sources: buildSources(tokenReports, contractProfiles, openai, projectEvidence, agents)
   };
+  report.credential = await createReportCredential(report);
+
+  return report;
 }
 
 function createProjectProgressReporter(onProgress) {
@@ -274,6 +284,31 @@ function adjudicateFindings(findings, reviews = []) {
   }
 
   return { activeFindings, suppressedFindings };
+}
+
+function mergeAiFindings(localFindings, aiFindings = []) {
+  const merged = [...localFindings];
+  const seen = new Set(localFindings.map(findingKey));
+
+  for (const finding of aiFindings) {
+    if (!finding?.title || !finding?.context) continue;
+    const normalized = {
+      ...finding,
+      id: finding.id || `ai-${slugify(`${finding.dimension || "technical"}-${finding.title}`)}`,
+      source: "ai_review",
+      confidence: clampConfidence(finding.confidence, 0.72)
+    };
+    const key = findingKey(normalized);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(normalized);
+  }
+
+  return merged;
+}
+
+function findingKey(finding) {
+  return slugify(`${finding.dimension || "technical"}-${finding.title || ""}-${finding.evidence || ""}`);
 }
 
 function normalizeProjectInput(input) {
@@ -876,6 +911,109 @@ function summarizeProject(findings, tokenReports) {
   };
 }
 
+function applyAgentScoreAdjustment(summary, { agents = [], recommendations = [], findings = [] } = {}) {
+  const recommendationAgent = agents.find((agent) => agent.id === "recommendation-agent");
+  if (!recommendationAgent || recommendationAgent.status === "error") return summary;
+  const riskPressure = recommendationAgent.meta?.riskPressure || {};
+  const agentScoreImpact = riskPressure.source === "ai"
+    ? Math.max(0, Math.min(30, Number(riskPressure.scoreImpact) || 0))
+    : 0;
+
+  const priorityCounts = {
+    urgent: recommendations.filter((item) => item.priority === "urgent").length,
+    high: recommendations.filter((item) => item.priority === "high").length,
+    medium: recommendations.filter((item) => item.priority === "medium").length
+  };
+  const aiFindingCount = findings.filter((finding) => finding.source === "ai_review").length;
+  const aiSevereFindingCount = findings.filter((finding) =>
+    finding.source === "ai_review" && ["critical", "high"].includes(finding.severity)
+  ).length;
+  const aiMediumFindingCount = findings.filter((finding) =>
+    finding.source === "ai_review" && finding.severity === "medium"
+  ).length;
+  const aiMaterialFindingCount = findings.filter((finding) =>
+    finding.source === "ai_review" && ["critical", "high", "medium"].includes(finding.severity)
+  ).length;
+  const severeFindingCount = findings.filter((finding) =>
+    ["critical", "high"].includes(finding.severity)
+  ).length;
+  const materialFindingCount = findings.filter((finding) =>
+    ["critical", "high", "medium"].includes(finding.severity)
+  ).length;
+  const mediumRecommendationWeight = severeFindingCount || agentScoreImpact >= 8
+    ? 3
+    : materialFindingCount
+      ? 1
+      : 0;
+  const mediumRecommendationPenalty = materialFindingCount || agentScoreImpact >= 8
+    ? priorityCounts.medium * mediumRecommendationWeight
+    : 0;
+  const aiFindingPenalty = aiSevereFindingCount * 4 + aiMediumFindingCount * 2;
+  const priorityPenalty =
+    priorityCounts.urgent * 14 +
+    priorityCounts.high * 8 +
+    mediumRecommendationPenalty;
+  const rawPenalty = Math.max(priorityPenalty, agentScoreImpact) + aiFindingPenalty;
+  const cap = summary.level === "low" ? 26 : 34;
+  const penalty = Math.min(cap, rawPenalty);
+
+  if (!penalty) {
+    return {
+      ...summary,
+      aiScoreAdjustment: {
+        penalty: 0,
+        scoreImpact: agentScoreImpact,
+        priorityCounts,
+        aiFindingCount,
+        aiSevereFindingCount,
+        aiMediumFindingCount,
+        aiMaterialFindingCount,
+        materialFindingCount,
+        confidence: clampConfidence(riskPressure.confidence, 0.58),
+        reason: "Recommendation agent did not add material scoring pressure."
+      }
+    };
+  }
+
+  const projectScore = Math.max(0, summary.projectScore - penalty);
+  const level = adjustedLevel(summary.level, projectScore, priorityCounts);
+  return {
+    ...summary,
+    projectScore,
+    level,
+    label: adjustedLabel(level, summary.label),
+    description: describeSummary(level),
+    aiScoreAdjustment: {
+      penalty,
+      scoreImpact: agentScoreImpact,
+      priorityCounts,
+      aiFindingCount,
+      aiSevereFindingCount,
+      aiMediumFindingCount,
+      aiMaterialFindingCount,
+      materialFindingCount,
+      confidence: clampConfidence(riskPressure.confidence, 0.58),
+      reason: riskPressure.reason || "Recommendation agent priorities and AI findings were included in the score."
+    }
+  };
+}
+
+function adjustedLevel(currentLevel, score, priorityCounts) {
+  if (priorityCounts.urgent > 0 || score < 35) return "high";
+  if (priorityCounts.high > 0 || score < 55) return currentLevel === "high" ? "high" : "watch";
+  if (currentLevel !== "low" && score < 70) return ["high", "watch"].includes(currentLevel) ? currentLevel : "incomplete";
+  return currentLevel;
+}
+
+function adjustedLabel(level, fallback) {
+  return {
+    high: "High Project Risk",
+    watch: "Project Needs Review",
+    incomplete: "Evidence Incomplete",
+    low: "No Major Signals"
+  }[level] || fallback;
+}
+
 function baseProjectScore(tokenScores, tokenReports) {
   if (tokenScores.length) {
     return Math.round(tokenScores.reduce((sum, score) => sum + Number(score), 0) / tokenScores.length);
@@ -1058,9 +1196,22 @@ function uniqueSurfaces(surfaces) {
 
 function finding(input) {
   return {
-    id: `${input.dimension}-${input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+    id: `${input.dimension}-${slugify(input.title)}`,
     ...input
   };
+}
+
+function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function clampConfidence(value, fallback = 0.7) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0.1, Math.min(0.98, number));
 }
 
 function countSeverity(findings) {

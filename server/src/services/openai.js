@@ -44,8 +44,7 @@ export async function requestStructuredAI({ system, payload, temperature = 0.2 }
   }
 
   try {
-    const baseUrl = (process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
-    const raw = await fetchJson(`${baseUrl}/chat/completions`, {
+    const raw = await fetchJson(openAIChatCompletionsUrl(), {
       method: "POST",
       retries: 1,
       timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 90000),
@@ -105,9 +104,8 @@ export async function requestWebResearchAI({ query, project = null, addresses = 
   }
 
   try {
-    const baseUrl = (process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
     const model = process.env.OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL;
-    const raw = await fetchJson(`${baseUrl}/chat/completions`, {
+    const raw = await fetchJson(openAIChatCompletionsUrl(), {
       method: "POST",
       retries: 1,
       timeoutMs: Number(process.env.OPENAI_WEB_SEARCH_TIMEOUT_MS || process.env.OPENAI_TIMEOUT_MS || 90000),
@@ -165,6 +163,12 @@ export async function requestWebResearchAI({ query, project = null, addresses = 
       message: error.message
     };
   }
+}
+
+function openAIChatCompletionsUrl() {
+  const value = (process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  if (/\/chat\/completions$/i.test(value)) return value;
+  return `${value}/chat/completions`;
 }
 
 function buildProjectAnalystInstructions() {

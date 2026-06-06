@@ -353,6 +353,10 @@ async function buildRecommendationAgent(context) {
   const fallbackRecommendations = buildRuleRecommendations(context);
   const aiResult = await requestRecommendationAI(context, fallbackRecommendations);
   const aiRecommendations = normalizeRecommendations(aiResult.payload?.recommendations);
+  const riskPressure = normalizeRiskPressure(aiResult.payload?.riskPressure, {
+    recommendations: aiRecommendations,
+    fallbackRecommendations
+  });
   const recommendations = dedupeRecommendations([
     ...fallbackRecommendations,
     ...aiRecommendations
@@ -378,7 +382,10 @@ async function buildRecommendationAgent(context) {
         status: aiResult.status,
         message: aiResult.message
       }
-    ]
+    ],
+    meta: {
+      riskPressure
+    }
   });
 }
 
@@ -412,8 +419,10 @@ async function requestRecommendationAI(context, fallbackRecommendations) {
     system: [
       "You are ChainLens' Recommendation Agent.",
       "Return JSON only. Do not include markdown.",
-      "Schema: {\"summary\":\"string\",\"recommendations\":[{\"priority\":\"urgent|high|medium|low\",\"title\":\"string\",\"action\":\"string\",\"reason\":\"string\",\"evidence\":\"string\"}]}",
+      "Schema: {\"summary\":\"string\",\"riskPressure\":{\"scoreImpact\":0,\"confidence\":0.0,\"reason\":\"string\"},\"recommendations\":[{\"priority\":\"urgent|high|medium|low\",\"title\":\"string\",\"action\":\"string\",\"reason\":\"string\",\"evidence\":\"string\"}]}",
       "Recommend next diligence and safety actions only.",
+      "riskPressure.scoreImpact is an integer from 0 to 30 showing how much the final project score should be reduced because the recommendation agent sees unresolved evidence gaps or material risk beyond the deterministic score.",
+      "Use scoreImpact 0-4 for evidence-backed projects with routine record-keeping only, 5-12 for missing surfaces or moderate unresolved gaps, 13-20 for high-priority evidence gaps, and 21-30 only for urgent or material unresolved risk.",
       "Do not provide investment advice, buy or sell instructions, price predictions, guaranteed outcomes, or scam labels.",
       "Prioritize narrative-to-delivery gaps when project claims are not backed by verified contracts, active repositories, audits, governance, or other reproducible artifacts.",
       "Use urgent only for critical findings, honeypot-like behavior, owner balance modification, or direct wallet exposure.",
@@ -612,6 +621,33 @@ function recommendation(input = {}) {
     reason: String(input.reason || "").trim(),
     evidence: String(input.evidence || "").trim()
   };
+}
+
+function normalizeRiskPressure(input = {}, { recommendations = [], fallbackRecommendations = [] } = {}) {
+  const explicitImpact = Number(input.scoreImpact);
+  const hasExplicitImpact = Number.isFinite(explicitImpact);
+  const estimatedImpact = estimateRiskPressure([...recommendations, ...fallbackRecommendations]);
+  const scoreImpact = hasExplicitImpact
+    ? Math.max(0, Math.min(30, Math.round(explicitImpact)))
+    : estimatedImpact;
+  return {
+    scoreImpact,
+    source: hasExplicitImpact ? "ai" : "rules",
+    confidence: clampConfidence(input.confidence ?? (hasExplicitImpact ? 0.72 : 0.58)),
+    reason: String(input.reason || (scoreImpact ? "Recommendation priorities add score pressure." : "Recommendation agent did not add score pressure.")).trim()
+  };
+}
+
+function estimateRiskPressure(recommendations = []) {
+  const counts = recommendations.reduce((acc, item) => {
+    acc[item.priority] = (acc[item.priority] || 0) + 1;
+    return acc;
+  }, {});
+  const impact =
+    (counts.urgent || 0) * 12 +
+    (counts.high || 0) * 7 +
+    (counts.medium || 0) * 3;
+  return Math.max(0, Math.min(22, impact));
 }
 
 function dedupeRecommendations(recommendations) {

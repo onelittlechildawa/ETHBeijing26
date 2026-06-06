@@ -1,4 +1,3 @@
-import Chart from "chart.js/auto";
 import {
   Activity,
   AlertTriangle,
@@ -28,7 +27,7 @@ import {
   Users,
   WalletCards
 } from "lucide";
-import { analyzeProject, fetchHotProjects } from "./api.js";
+import { analyzeProject, attestProjectReport, fetchHotProjects, translateReportTexts } from "./api.js";
 import { analyzeWalletExposure, connectWallet, hasWalletProvider } from "./wallet.js";
 import "./styles.css";
 
@@ -120,7 +119,6 @@ const messages = {
     progressAgentReview: "Coordinate agent review",
     progressReport: "Assemble report",
     queryRequired: "Enter a project, website, or contract address.",
-    dimensionHealth: "Dimension health",
     projectFindings: "Project findings",
     found: "{count} found",
     noMaterialFindings: "No material findings in available data.",
@@ -187,6 +185,22 @@ const messages = {
     confidence: "{value}% confidence",
     evidenceAttached: "Evidence attached",
     generatedAt: "Generated",
+    credentialTitle: "Immutable credential",
+    credentialSubtitle: "Only the report hash is written on-chain.",
+    credentialHash: "Report hash",
+    credentialIssuer: "Issuer",
+    credentialContract: "Contract",
+    credentialNetwork: "Credential network",
+    credentialAttestedAt: "Attested",
+    credentialStatusUnattested: "Not on-chain yet",
+    credentialStatusAttested: "On-chain",
+    credentialStatusNotConfigured: "Notary not configured",
+    credentialCreate: "Create credential",
+    credentialCreating: "Creating",
+    credentialOpenTx: "Open transaction",
+    credentialOpenContract: "Open contract",
+    credentialUnavailable: "Generate a report to create a credential.",
+    credentialStored: "Stored on Sepolia",
     summary: "Summary",
     recommendations: "Recommendations",
     suppressed: "Suppressed",
@@ -271,7 +285,6 @@ const messages = {
     progressAgentReview: "协调 Agent 复核",
     progressReport: "生成报告",
     queryRequired: "请输入项目、官网或合约地址。",
-    dimensionHealth: "各项情况",
     projectFindings: "发现的问题",
     found: "发现 {count} 条",
     noMaterialFindings: "当前数据中没有发现重大风险。",
@@ -338,6 +351,22 @@ const messages = {
     confidence: "{value}% 置信度",
     evidenceAttached: "已附证据",
     generatedAt: "生成时间",
+    credentialTitle: "不可篡改凭证",
+    credentialSubtitle: "只把报告 hash 写到链上，不公开报告正文。",
+    credentialHash: "报告 Hash",
+    credentialIssuer: "出具方",
+    credentialContract: "凭证合约",
+    credentialNetwork: "凭证网络",
+    credentialAttestedAt: "上链时间",
+    credentialStatusUnattested: "尚未上链",
+    credentialStatusAttested: "已上链",
+    credentialStatusNotConfigured: "凭证服务未配置",
+    credentialCreate: "生成凭证",
+    credentialCreating: "生成中",
+    credentialOpenTx: "打开交易",
+    credentialOpenContract: "打开合约",
+    credentialUnavailable: "生成报告后才能创建凭证。",
+    credentialStored: "已写入 Sepolia",
     summary: "摘要",
     recommendations: "建议",
     suppressed: "已压制",
@@ -356,6 +385,11 @@ let state = {
   address: "",
   activeTab: "analyze",
   analysisProgress: null,
+  translations: {
+    loading: false,
+    reportKey: null,
+    items: {}
+  },
   hotProjects: {
     loading: false,
     loaded: false,
@@ -369,10 +403,13 @@ let state = {
     loading: false,
     error: null,
     exposure: null
+  },
+  credential: {
+    loading: false,
+    error: null
   }
 };
 
-let radarChart = null;
 let boundWalletProvider = null;
 
 const app = document.querySelector("#app");
@@ -424,7 +461,6 @@ function render() {
   `;
 
   bindEvents();
-  if (state.report) renderRadar(state.report);
 }
 
 function bindEvents() {
@@ -433,6 +469,12 @@ function bindEvents() {
     state = { ...state, locale };
     saveLocale(locale);
     render();
+    if (locale === "zh" && state.report) {
+      loadReportTranslations(state.report);
+    }
+    if (locale === "zh" && state.hotProjects.digest) {
+      loadHotProjectTranslations(state.hotProjects.digest);
+    }
   });
 
   document.querySelector("#analyze-form").addEventListener("submit", async (event) => {
@@ -445,6 +487,10 @@ function bindEvents() {
 
   document.querySelectorAll("[data-export-format]").forEach((button) => {
     button.addEventListener("click", () => exportReport(button.dataset.exportFormat));
+  });
+
+  document.querySelector("#credential-attest")?.addEventListener("click", () => {
+    createReportCredentialOnChain();
   });
 
   document.querySelectorAll("[data-history-load]").forEach((button) => {
@@ -520,6 +566,15 @@ async function runAnalysis({ chainId, query, address }) {
       ...state.wallet,
       exposure: null,
       error: null
+    },
+    credential: {
+      loading: false,
+      error: null
+    },
+    translations: {
+      loading: false,
+      reportKey: null,
+      items: {}
     }
   };
   render();
@@ -537,6 +592,9 @@ async function runAnalysis({ chainId, query, address }) {
     const history = rememberReport(report, { query, chainId, address });
     state = { ...state, loading: false, report, history, analysisProgress: null };
     render();
+    if (state.locale === "zh") {
+      loadReportTranslations(report);
+    }
 
     if (state.wallet.provider && state.wallet.account) {
       await runWalletExposure(report);
@@ -545,6 +603,225 @@ async function runAnalysis({ chainId, query, address }) {
     state = { ...state, loading: false, error: error.message, analysisProgress: null };
     render();
   }
+}
+
+async function createReportCredentialOnChain() {
+  if (!state.report || state.credential.loading) return;
+
+  state = {
+    ...state,
+    credential: {
+      loading: true,
+      error: null
+    }
+  };
+  render();
+
+  try {
+    const result = await attestProjectReport(state.report);
+    const report = {
+      ...state.report,
+      credential: result.credential || state.report.credential
+    };
+    const history = updateReportInHistory(report);
+    state = {
+      ...state,
+      report,
+      history,
+      credential: {
+        loading: false,
+        error: result.status === "not_configured"
+          ? `${t("credentialStatusNotConfigured")}: ${(result.missing || []).join(", ")}`
+          : null
+      }
+    };
+  } catch (error) {
+    state = {
+      ...state,
+      credential: {
+        loading: false,
+        error: error.message
+      }
+    };
+  }
+  render();
+}
+
+async function loadReportTranslations(report) {
+  if (!report || state.locale !== "zh") return;
+  const reportKey = report.generatedAt || `${report.project?.name}-${report.summary?.projectScore}`;
+
+  const texts = collectReportTranslationTexts(report)
+    .filter((text) => !state.translations.items?.[text]);
+  if (!texts.length) return;
+
+  state = {
+    ...state,
+    translations: {
+      ...state.translations,
+      loading: true,
+      reportKey,
+      items: state.translations.items || {}
+    }
+  };
+  render();
+
+  try {
+    const result = await translateReportTexts({ texts, targetLang: "ZH", sourceLang: "EN" });
+    state = {
+      ...state,
+      translations: {
+        ...state.translations,
+        loading: false,
+        reportKey,
+        items: {
+          ...(state.translations.items || {}),
+          ...(result.translations || {})
+        }
+      }
+    };
+  } catch {
+    state = {
+      ...state,
+      translations: {
+        ...state.translations,
+        loading: false,
+        reportKey
+      }
+    };
+  }
+  render();
+}
+
+async function loadHotProjectTranslations(digest) {
+  if (!digest || state.locale !== "zh") return;
+  const reportKey = `hot-${digest.generatedAt || digest.sourceStatus || "latest"}`;
+  const texts = collectHotProjectTranslationTexts(digest)
+    .filter((text) => !state.translations.items?.[text]);
+  if (!texts.length) return;
+
+  state = {
+    ...state,
+    translations: {
+      ...state.translations,
+      loading: true,
+      reportKey,
+      items: state.translations.items || {}
+    }
+  };
+  render();
+
+  try {
+    const result = await translateReportTexts({ texts, targetLang: "ZH", sourceLang: "EN" });
+    state = {
+      ...state,
+      translations: {
+        ...state.translations,
+        loading: false,
+        reportKey,
+        items: {
+          ...(state.translations.items || {}),
+          ...(result.translations || {})
+        }
+      }
+    };
+  } catch {
+    state = {
+      ...state,
+      translations: {
+        ...state.translations,
+        loading: false,
+        reportKey
+      }
+    };
+  }
+  render();
+}
+
+function collectReportTranslationTexts(report) {
+  const texts = [];
+  const add = (value) => {
+    const text = String(value || "").trim();
+    if (!shouldTranslateClientText(text)) return;
+    texts.push(text);
+  };
+
+  add(report.skepticReview?.headline);
+  (report.summary?.actions || []).forEach((action) => {
+    add(action.title);
+    add(action.action);
+    add(action.reason);
+    add(action.evidence);
+  });
+  (report.recommendations || []).forEach((recommendation) => {
+    add(recommendation.title);
+    add(recommendation.action);
+    add(recommendation.reason);
+    add(recommendation.evidence);
+  });
+  (report.skepticReview?.nextQuestions || []).forEach(add);
+  (report.skepticReview?.claimAudit || []).forEach((claim) => {
+    add(claim.claim);
+    add(claim.question);
+  });
+  add(report.openai?.summary);
+  (report.findings || []).forEach((finding) => {
+    add(finding.title);
+    add(finding.context);
+    add(finding.evidence);
+  });
+  (report.suppressedFindings || []).forEach((finding) => {
+    add(finding.title);
+    add(finding.suppressionReason || finding.review?.reason || finding.context);
+    add(finding.suppressionEvidence || finding.review?.evidence || finding.evidence);
+  });
+  (report.openai?.findings || []).forEach((finding) => {
+    add(finding.title);
+    add(finding.context);
+    add(finding.evidence);
+  });
+  (report.agents || []).forEach((agent) => add(agent.summary));
+  (report.projectEvidence?.artifacts || []).forEach((artifact) => add(artifact.summary));
+
+  return [...new Set(texts)].slice(0, 60);
+}
+
+function collectHotProjectTranslationTexts(digest) {
+  const texts = [];
+  const add = (value) => {
+    const text = String(value || "").trim();
+    if (!shouldTranslateClientText(text)) return;
+    texts.push(text);
+  };
+
+  (digest.items || []).forEach((item) => {
+    add(item.skepticReview?.headline);
+    (item.skepticReview?.nextQuestions || []).slice(0, 2).forEach(add);
+    (item.primaryFindings || []).slice(0, 2).forEach((finding) => {
+      add(finding.title);
+      add(finding.context);
+    });
+    (item.agentSummaries || item.skepticReview?.agentReview?.summaries || []).slice(0, 3).forEach((agent) => add(agent.summary));
+  });
+
+  return [...new Set(texts)].slice(0, 80);
+}
+
+function shouldTranslateClientText(text) {
+  if (!text || text.length > 1200) return false;
+  if (/[\u4e00-\u9fff]/.test(text)) return false;
+  if (!/[a-zA-Z]/.test(text)) return false;
+  if (/^https?:\/\//i.test(text)) return false;
+  if (/^0x[a-fA-F0-9]{8,}$/.test(text)) return false;
+  return true;
+}
+
+function displayText(text) {
+  const value = String(text || "").trim();
+  if (!value || state.locale !== "zh") return value;
+  const knownText = localizeRecommendationText(value);
+  if (knownText !== value) return knownText;
+  return state.translations.items?.[value] || value;
 }
 
 async function loadHotProjects({ force = false } = {}) {
@@ -584,6 +861,9 @@ async function loadHotProjects({ force = false } = {}) {
     };
   }
   render();
+  if (state.locale === "zh" && state.hotProjects.digest) {
+    loadHotProjectTranslations(state.hotProjects.digest);
+  }
 }
 
 async function connectWalletForReport() {
@@ -870,7 +1150,7 @@ function hotProjectCardTemplate(item) {
         <strong>${formatAgentCount(agents.length)}</strong>
       </div>
       ${(nextQuestion || finding) ? `
-        <p class="hot-question">${escapeHtml(localizeRecommendationText(nextQuestion || finding.context || finding.title))}</p>
+        <p class="hot-question">${escapeHtml(displayText(nextQuestion || finding.context || finding.title))}</p>
       ` : ""}
       ${item.pair?.url ? `<a class="hot-pair-link" href="${escapeHtml(item.pair.url)}" target="_blank" rel="noreferrer">${icon(ExternalLink)} <span>${escapeHtml(item.pair.name || item.pair.address || "Pair")}</span></a>` : ""}
     </article>
@@ -940,16 +1220,11 @@ function reportTemplate(report) {
         </div>
       </div>
 
+      ${credentialPanelTemplate(report)}
+
       ${skepticReviewTemplate(report)}
 
       ${agentCrewTemplate(report)}
-
-      <div class="radar-panel">
-        <div class="panel-heading compact">
-          <h2>${t("dimensionHealth")}</h2>
-        </div>
-        <canvas id="radar-chart" width="360" height="260"></canvas>
-      </div>
 
       <div class="signals-panel">
         <div class="panel-heading compact">
@@ -1013,12 +1288,58 @@ function riskActionSummaryTemplate(report) {
         <ol>
           ${actions.map((action) => `
             <li>
-              <strong>${escapeHtml(localizeRecommendationText(action.title || action.priority || ""))}</strong>
-              <span>${escapeHtml(localizeRecommendationText(action.action || action.reason || ""))}</span>
+              <strong>${escapeHtml(displayText(action.title || action.priority || ""))}</strong>
+              <span>${escapeHtml(displayText(action.action || action.reason || ""))}</span>
             </li>
           `).join("")}
         </ol>
       ` : `<p>${t("riskActionsEmpty")}</p>`}
+    </div>
+  `;
+}
+
+function credentialPanelTemplate(report) {
+  const credential = report.credential || {};
+  const status = credential.status || "unattested";
+  const attestation = credential.attestation || {};
+  const isAttested = status === "attested";
+  const isLoading = state.credential.loading;
+  const txUrl = credential.transactionUrl;
+  const contractUrl = credential.contractUrl || buildExplorerLink(credential.explorerBaseUrl, "address", credential.contractAddress);
+  const statusLabel = isAttested
+    ? t("credentialStatusAttested")
+    : state.credential.error?.startsWith(t("credentialStatusNotConfigured"))
+      ? t("credentialStatusNotConfigured")
+      : t("credentialStatusUnattested");
+
+  return `
+    <div class="credential-panel credential-${escapeHtml(status)}">
+      <div class="panel-heading compact">
+        <div>
+          <p class="eyebrow">${icon(CheckCircle2)} ${t("credentialTitle")}</p>
+          <h2>${escapeHtml(statusLabel)}</h2>
+          <p>${t("credentialSubtitle")}</p>
+        </div>
+        <span>${escapeHtml(credential.chainName || "Sepolia")}</span>
+      </div>
+      <div class="credential-grid">
+        ${metric(t("credentialHash"), credential.reportHash ? shortHash(credential.reportHash) : "N/A")}
+        ${metric(t("credentialIssuer"), credential.issuer ? shortAddress(credential.issuer) : "N/A")}
+        ${metric(t("credentialContract"), credential.contractAddress ? shortAddress(credential.contractAddress) : "N/A")}
+        ${metric(t("credentialAttestedAt"), credential.attestedAt ? formatDateTime(credential.attestedAt) : "N/A")}
+      </div>
+      <div class="credential-actions">
+        ${isAttested ? `<span class="credential-success">${icon(CheckCircle2)} ${t("credentialStored")}</span>` : `
+          <button id="credential-attest" class="secondary-action" type="button" ${isLoading ? "disabled" : ""}>
+            ${isLoading ? icon(Loader2, "spin") : icon(Database)}
+            <span>${isLoading ? t("credentialCreating") : t("credentialCreate")}</span>
+          </button>
+        `}
+        ${txUrl ? `<a class="icon-action export-action" href="${escapeHtml(txUrl)}" target="_blank" rel="noreferrer">${icon(ExternalLink)}<span>${t("credentialOpenTx")}</span></a>` : ""}
+        ${contractUrl ? `<a class="icon-action export-action" href="${escapeHtml(contractUrl)}" target="_blank" rel="noreferrer">${icon(ExternalLink)}<span>${t("credentialOpenContract")}</span></a>` : ""}
+      </div>
+      ${state.credential.error ? `<div class="credential-error">${icon(AlertTriangle)} <span>${escapeHtml(state.credential.error)}</span></div>` : ""}
+      ${attestation.txHash ? `<code class="credential-tx">${escapeHtml(attestation.txHash)}</code>` : ""}
     </div>
   `;
 }
@@ -1206,48 +1527,6 @@ function eventTemplate(event) {
   `;
 }
 
-function renderRadar(report) {
-  const canvas = document.querySelector("#radar-chart");
-  if (!canvas) return;
-  if (radarChart) radarChart.destroy();
-
-  radarChart = new Chart(canvas, {
-    type: "radar",
-    data: {
-      labels: report.dimensions.map((dimension) => localizeDimension(dimension)),
-      datasets: [
-        {
-          label: t("health"),
-          data: report.dimensions.map((dimension) => dimension.score),
-          fill: true,
-          borderColor: "#2563eb",
-          backgroundColor: "rgba(37, 99, 235, 0.16)",
-          pointBackgroundColor: "#0f172a",
-          pointBorderColor: "#ffffff",
-          pointRadius: 4
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        r: {
-          min: 0,
-          max: 100,
-          ticks: { stepSize: 25, color: "#64748b", backdropColor: "transparent" },
-          grid: { color: "rgba(100, 116, 139, 0.25)" },
-          angleLines: { color: "rgba(100, 116, 139, 0.25)" },
-          pointLabels: { color: "#334155", font: { size: 12, weight: 600 } }
-        }
-      },
-      plugins: {
-        legend: { display: false }
-      }
-    }
-  });
-}
-
 function skepticReviewTemplate(report) {
   const review = report.skepticReview;
   if (!review) return "";
@@ -1262,7 +1541,7 @@ function skepticReviewTemplate(report) {
         </div>
         <span>${escapeHtml(localizeStatus(review.agentReview?.status || "partial"))}</span>
       </div>
-      <p class="skeptic-headline">${escapeHtml(localizeSkepticHeadline(review.headline, review.verdict))}</p>
+      <p class="skeptic-headline">${escapeHtml(displayText(localizeSkepticHeadline(review.headline, review.verdict)))}</p>
       <div class="skeptic-metrics">
         ${metric(t("hypePressure"), `${formatNumber(review.hypePressure?.score || 0)} / ${escapeHtml(localizeLevel(review.hypePressure?.level))}`)}
         ${metric(t("evidenceCoverage"), `${formatNumber(review.evidenceCoverage?.score || 0)} / ${escapeHtml(localizeLevel(review.evidenceCoverage?.level))}`)}
@@ -1275,7 +1554,7 @@ function skepticReviewTemplate(report) {
             ${claimAudit.slice(0, 3).map((claim) => `
               <article>
                 <strong>${escapeHtml(localizeClaimCategory(claim.category))}</strong>
-                <span>${escapeHtml(claim.question || claim.claim)}</span>
+                <span>${escapeHtml(displayText(claim.question || claim.claim))}</span>
               </article>
             `).join("") || `<article><span>${t("evidenceAttached")}</span></article>`}
           </div>
@@ -1285,7 +1564,7 @@ function skepticReviewTemplate(report) {
           <div class="skeptic-list">
             ${questions.slice(0, 3).map((question) => `
               <article>
-                <span>${escapeHtml(localizeRecommendationText(question))}</span>
+                <span>${escapeHtml(displayText(question))}</span>
               </article>
             `).join("") || `<article><span>${t("noQuestions")}</span></article>`}
           </div>
@@ -1325,7 +1604,7 @@ function agentCardTemplate(agent) {
           <span>${escapeHtml(localizeStatus(agent.status || "partial"))} / ${formatNumber(agent.evidenceCount || 0)} ${t("evidence").toLowerCase()}</span>
         </div>
       </div>
-      <p>${escapeHtml(localizeAgentSummary(agent))}</p>
+      <p>${escapeHtml(displayText(localizeAgentSummary(agent)))}</p>
       <div class="agent-meta-row">
         <strong>${formatNumber(findings.length)} ${t("findings").toLowerCase()}</strong>
         <span>${t("confidence", { value: Math.round((agent.confidence || 0.5) * 100) })}</span>
@@ -1340,12 +1619,12 @@ function findingTemplate(signal) {
       <div class="signal-icon">${icon(iconForSeverity(signal.severity))}</div>
       <div>
         <div class="signal-title-row">
-          <h3>${escapeHtml(signal.title)}</h3>
+          <h3>${escapeHtml(displayText(signal.title))}</h3>
           <span>${escapeHtml(localizeSeverity(signal.severity))}</span>
         </div>
-        <p>${escapeHtml(signal.context)}</p>
+        <p>${escapeHtml(displayText(signal.context))}</p>
         <div class="evidence-row">
-          <span>${escapeHtml(signal.evidence)}</span>
+          <span>${escapeHtml(displayText(signal.evidence))}</span>
           <strong>${t("confidence", { value: Math.round(signal.confidence * 100) })}</strong>
         </div>
       </div>
@@ -1377,11 +1656,11 @@ function recommendationTemplate(recommendation) {
     <article class="recommendation-row priority-${escapeHtml(recommendation.priority || "low")}">
       <div class="recommendation-priority">${escapeHtml(localizePriority(recommendation.priority || "low"))}</div>
       <div class="recommendation-body">
-        <h3>${escapeHtml(localizeRecommendationText(recommendation.title))}</h3>
-        <p>${escapeHtml(localizeRecommendationText(recommendation.action))}</p>
+        <h3>${escapeHtml(displayText(recommendation.title))}</h3>
+        <p>${escapeHtml(displayText(recommendation.action))}</p>
         <div class="evidence-row">
-          <span>${escapeHtml(localizeRecommendationText(recommendation.reason))}</span>
-          <strong>${escapeHtml(recommendation.evidence || t("evidenceAttached"))}</strong>
+          <span>${escapeHtml(displayText(recommendation.reason))}</span>
+          <strong>${escapeHtml(displayText(recommendation.evidence || t("evidenceAttached")))}</strong>
         </div>
       </div>
     </article>
@@ -1402,12 +1681,12 @@ function suppressedFindingsTemplate(findings) {
             <div class="signal-icon">${icon(CheckCircle2)}</div>
             <div>
               <div class="signal-title-row">
-                <h3>${escapeHtml(finding.title)}</h3>
+                <h3>${escapeHtml(displayText(finding.title))}</h3>
                 <span>${t("falsePositive")}</span>
               </div>
-              <p>${escapeHtml(finding.suppressionReason || finding.review?.reason || finding.context)}</p>
+              <p>${escapeHtml(displayText(finding.suppressionReason || finding.review?.reason || finding.context))}</p>
               <div class="evidence-row">
-                <span>${escapeHtml(finding.suppressionEvidence || finding.review?.evidence || finding.evidence)}</span>
+                <span>${escapeHtml(displayText(finding.suppressionEvidence || finding.review?.evidence || finding.evidence))}</span>
                 <strong>${t("confidence", { value: Math.round((finding.review?.confidence || finding.confidence || 0.5) * 100) })}</strong>
               </div>
             </div>
@@ -1427,7 +1706,7 @@ function analystNotesTemplate(openai) {
         <h2>${t("analystNotes")}</h2>
         <span>${escapeHtml(localizeStatus(openai?.status || "unknown"))}</span>
       </div>
-      ${openai?.summary ? `<p class="analyst-summary">${escapeHtml(openai.summary)}</p>` : ""}
+      ${openai?.summary ? `<p class="analyst-summary">${escapeHtml(displayText(openai.summary))}</p>` : ""}
       <div class="signals-list compact-list">
         ${findings.map(findingTemplate).join("")}
       </div>
@@ -1462,7 +1741,7 @@ function artifactTemplate(artifact) {
           <h3>${escapeHtml(artifact.title)}</h3>
           <span>${escapeHtml(artifact.type.replace(/_/g, " "))}</span>
         </div>
-        <p>${escapeHtml(artifact.summary || t("evidenceAttached"))}</p>
+        <p>${escapeHtml(displayText(artifact.summary || t("evidenceAttached")))}</p>
         <div class="artifact-meta">
           ${facts.map((fact) => `<strong>${escapeHtml(fact)}</strong>`).join("")}
           <a href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer">${icon(ExternalLink)} <span>${t("open")}</span></a>
@@ -1648,6 +1927,17 @@ function rememberReport(report, meta = {}) {
   return persistHistory([item, ...previous].slice(0, MAX_HISTORY_ITEMS));
 }
 
+function updateReportInHistory(report) {
+  const generatedAt = report?.generatedAt;
+  const reportHash = report?.credential?.reportHash;
+  const history = (state.history || []).map((item) => {
+    const sameReport = (reportHash && item.report?.credential?.reportHash === reportHash)
+      || (generatedAt && item.report?.generatedAt === generatedAt);
+    return sameReport ? { ...buildHistoryItem(report, item), id: item.id } : item;
+  });
+  return persistHistory(history);
+}
+
 function buildHistoryItem(report, meta = {}) {
   const generatedAt = report.generatedAt || new Date().toISOString();
   const name = report.project?.name || meta.query || "ChainLens report";
@@ -1681,9 +1971,16 @@ function loadHistoryItem(id) {
       ...state.wallet,
       exposure: null,
       error: null
+    },
+    credential: {
+      loading: false,
+      error: null
     }
   };
   render();
+  if (state.locale === "zh") {
+    loadReportTranslations(item.report);
+  }
 }
 
 function deleteHistoryItem(id) {
@@ -1748,14 +2045,27 @@ function buildMarkdownReport(report) {
   lines.push(`- ${t("summary")}: ${localizeSummaryLabel(report.summary?.label)} - ${localizeSummaryDescription(report.summary?.description, report.summary?.level)}`);
   lines.push("");
 
+  if (report.credential?.reportHash) {
+    lines.push(`## ${t("credentialTitle")}`);
+    lines.push(`- ${t("credentialHash")}: ${report.credential.reportHash}`);
+    lines.push(`- ${t("credentialStatusAttested")}: ${report.credential.status === "attested" ? "yes" : "no"}`);
+    lines.push(`- ${t("credentialNetwork")}: ${report.credential.chainName || report.credential.chainId || "N/A"}`);
+    lines.push(`- ${t("credentialIssuer")}: ${report.credential.issuer || "N/A"}`);
+    lines.push(`- ${t("credentialContract")}: ${report.credential.contractAddress || "N/A"}`);
+    if (report.credential.attestedAt) lines.push(`- ${t("credentialAttestedAt")}: ${formatDateTime(report.credential.attestedAt)}`);
+    if (report.credential.attestation?.txHash) lines.push(`- tx: ${report.credential.attestation.txHash}`);
+    if (report.credential.transactionUrl) lines.push(`- ${t("credentialOpenTx")}: ${report.credential.transactionUrl}`);
+    lines.push("");
+  }
+
   if (report.skepticReview) {
     lines.push(`## ${t("skepticReview")}`);
     lines.push(`- ${t("skepticVerdict")}: ${localizeSkepticVerdict(report.skepticReview.verdict)}`);
-    lines.push(`- ${t("summary")}: ${localizeSkepticHeadline(report.skepticReview.headline, report.skepticReview.verdict)}`);
+    lines.push(`- ${t("summary")}: ${displayText(localizeSkepticHeadline(report.skepticReview.headline, report.skepticReview.verdict))}`);
     lines.push(`- ${t("hypePressure")}: ${report.skepticReview.hypePressure?.score ?? "N/A"} / ${localizeLevel(report.skepticReview.hypePressure?.level)}`);
     lines.push(`- ${t("evidenceCoverage")}: ${report.skepticReview.evidenceCoverage?.score ?? "N/A"} / ${localizeLevel(report.skepticReview.evidenceCoverage?.level)}`);
     (report.skepticReview.nextQuestions || []).slice(0, 3).forEach((question, index) => {
-      lines.push(`${index + 1}. ${localizeRecommendationText(question)}`);
+      lines.push(`${index + 1}. ${displayText(question)}`);
     });
     lines.push("");
   }
@@ -1763,9 +2073,9 @@ function buildMarkdownReport(report) {
   lines.push(`## ${t("riskActionsTitle")}`);
   if (actions.length) {
     actions.forEach((action, index) => {
-      lines.push(`${index + 1}. **${localizePriority(action.priority || "low")} / ${localizeRecommendationText(action.title)}**`);
-      lines.push(`   - ${localizeRecommendationText(action.action || action.reason || "")}`);
-      if (action.evidence) lines.push(`   - ${t("evidence")}: ${action.evidence}`);
+      lines.push(`${index + 1}. **${localizePriority(action.priority || "low")} / ${displayText(action.title)}**`);
+      lines.push(`   - ${displayText(action.action || action.reason || "")}`);
+      if (action.evidence) lines.push(`   - ${t("evidence")}: ${displayText(action.evidence)}`);
     });
   } else {
     lines.push(t("riskActionsEmpty"));
@@ -1775,9 +2085,9 @@ function buildMarkdownReport(report) {
   lines.push(`## ${t("projectFindings")}`);
   if (findings.length) {
     findings.forEach((finding) => {
-      lines.push(`- **${localizeSeverity(finding.severity)} / ${finding.title}**`);
-      lines.push(`  ${finding.context || ""}`);
-      lines.push(`  ${t("evidence")}: ${finding.evidence || "N/A"}`);
+      lines.push(`- **${localizeSeverity(finding.severity)} / ${displayText(finding.title)}**`);
+      lines.push(`  ${displayText(finding.context || "")}`);
+      lines.push(`  ${t("evidence")}: ${displayText(finding.evidence || "N/A")}`);
     });
   } else {
     lines.push(t("noMaterialFindings"));
@@ -1878,23 +2188,6 @@ function localizeSummaryDescription(description, level) {
   }[level] || description || "";
 }
 
-function localizeDimension(dimension) {
-  const key = typeof dimension === "string" ? dimension : dimension?.key;
-  if (state.locale !== "zh") return (typeof dimension === "string" ? dimension : dimension?.label) || "N/A";
-  return {
-    identity: "身份",
-    asset: "资产",
-    delivery: "有没有做出来",
-    market: "市场",
-    governance: "治理",
-    community: "社区",
-    data: "数据质量",
-    contract: "合约",
-    holders: "分布",
-    liquidity: "流动性"
-  }[key] || (typeof dimension === "string" ? dimension : dimension?.label) || "N/A";
-}
-
 function localizeAgentName(agent) {
   if (state.locale !== "zh") return agent.name || "AI Agent";
   return {
@@ -1962,6 +2255,10 @@ function localizeSkepticVerdict(verdict) {
 
 function localizeSkepticHeadline(headline, verdict) {
   if (state.locale !== "zh") return headline || localizeSkepticVerdict(verdict);
+  const specificHeadline = String(headline || "").trim();
+  if (specificHeadline && state.translations.items?.[specificHeadline]) {
+    return state.translations.items[specificHeadline];
+  }
   return {
     needs_human_review: "有几个信号比较重，先找人认真看一遍，别只听项目方怎么说。",
     narrative_outpaces_evidence: "宣传说得多，但现在能查到的证据还跟不上。",
@@ -2100,6 +2397,16 @@ function formatDateTime(value) {
 function shortAddress(address) {
   if (!address) return "N/A";
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function shortHash(hash) {
+  if (!hash) return "N/A";
+  return `${hash.slice(0, 10)}...${hash.slice(-8)}`;
+}
+
+function buildExplorerLink(baseUrl, kind, value) {
+  if (!baseUrl || !kind || !value) return null;
+  return `${String(baseUrl).replace(/\/+$/, "")}/${kind}/${value}`;
 }
 
 function slugify(value) {

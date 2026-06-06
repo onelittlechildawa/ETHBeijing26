@@ -134,3 +134,51 @@ export async function fetchHotProjects({ chainId = "1", dex = "uniswap", limit =
   }
   return data;
 }
+
+export async function attestProjectReport(report) {
+  const url = new URL("/api/project/attest", API_BASE);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ report })
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || "Report credential failed");
+  }
+  return data;
+}
+
+export async function verifyProjectReport(payload) {
+  const url = new URL("/api/project/verify", API_BASE);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || "Report credential verification failed");
+  }
+  return data;
+}
+
+export async function translateReportTexts({ texts, targetLang = "ZH", sourceLang = "EN" }) {
+  const url = new URL("/api/translate", API_BASE);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ texts, targetLang, sourceLang })
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || "Translation failed");
+  }
+  return data;
+}

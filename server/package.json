@@ -7,13 +7,18 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "check": "node scripts/check-syntax.js"
+    "check": "node scripts/check-syntax.js",
+    "deploy:notary": "node scripts/deploy-notary.js"
   },
   "dependencies": {
     "@vercel/blob": "^2.4.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "viem": "^2.52.2"
+  },
+  "devDependencies": {
+    "solc": "^0.8.35"
   }
 }

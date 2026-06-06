@@ -5,7 +5,9 @@ import { analyzeToken } from "./services/analyzer.js";
 import { getHotProjects, refreshHotProjects } from "./services/hotProjects.js";
 import { analyzeProject } from "./services/projectAnalyzer.js";
 import { requestProjectOpenAI } from "./services/openai.js";
+import { attestProjectReport, verifyProjectReport } from "./services/reportNotary.js";
 import { SUPPORTED_CHAINS } from "./services/chains.js";
+import { translateTexts } from "./services/translate.js";
 
 const app = express();
 const isVercel = process.env.VERCEL === "1";
@@ -14,7 +16,7 @@ if (!isVercel) {
   app.use(cors());
 }
 
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "chainlens-api" });
@@ -28,9 +30,12 @@ app.get("/api/analyze", analyzeHandler);
 app.post("/api/analyze", analyzeHandler);
 app.post("/api/project/analyze", projectAnalyzeHandler);
 app.post("/api/project/analyze/stream", projectAnalyzeStreamHandler);
+app.post("/api/project/attest", projectAttestHandler);
+app.post("/api/project/verify", projectVerifyHandler);
 app.get("/api/hot-projects", hotProjectsHandler);
 app.get("/api/cron/hot-projects", hotProjectsCronHandler);
 app.post("/api/openai/project", openAIProjectHandler);
+app.post("/api/translate", translateHandler);
 
 async function analyzeHandler(req, res) {
   const input = req.method === "POST" ? req.body : req.query;
@@ -143,6 +148,60 @@ async function hotProjectsHandler(req, res) {
   }
 }
 
+async function projectAttestHandler(req, res) {
+  if (!req.body?.report) {
+    return res.status(400).json({
+      error: "INVALID_REPORT",
+      message: "Provide a ChainLens project report."
+    });
+  }
+
+  try {
+    const result = await attestProjectReport(req.body.report);
+    if (result.status === "invalid_report") {
+      return res.status(400).json({
+        error: "INVALID_REPORT",
+        message: result.message || "The report credential could not be verified.",
+        ...result
+      });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "REPORT_ATTESTATION_FAILED",
+      message: "ChainLens could not notarize this report.",
+      detail: process.env.NODE_ENV === "production" ? undefined : error.message
+    });
+  }
+}
+
+async function projectVerifyHandler(req, res) {
+  try {
+    const result = await verifyProjectReport({
+      report: req.body?.report || null,
+      reportHash: req.body?.reportHash || null
+    });
+
+    if (result.status === "invalid_report") {
+      return res.status(400).json({
+        error: "INVALID_REPORT",
+        message: result.message || "Provide a report or reportHash.",
+        ...result
+      });
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "REPORT_VERIFICATION_FAILED",
+      message: "ChainLens could not verify this report credential.",
+      detail: process.env.NODE_ENV === "production" ? undefined : error.message
+    });
+  }
+}
+
 async function hotProjectsCronHandler(req, res) {
   const expected = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : null;
   if (!expected || req.get("authorization") !== expected) {
@@ -199,6 +258,24 @@ async function openAIProjectHandler(req, res) {
     res.status(500).json({
       error: "OPENAI_PROJECT_FAILED",
       message: "ChainLens could not complete OpenAI-compatible project analysis.",
+      detail: process.env.NODE_ENV === "production" ? undefined : error.message
+    });
+  }
+}
+
+async function translateHandler(req, res) {
+  try {
+    const result = await translateTexts({
+      texts: req.body?.texts,
+      targetLang: req.body?.targetLang || "ZH",
+      sourceLang: req.body?.sourceLang || "EN"
+    });
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "TRANSLATION_FAILED",
+      message: "ChainLens could not translate this report.",
       detail: process.env.NODE_ENV === "production" ? undefined : error.message
     });
   }

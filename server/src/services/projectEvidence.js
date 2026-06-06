@@ -673,8 +673,9 @@ async function collectOpenAIWebResearchEvidence({ seed, project }) {
 }
 
 function openAIWebSearchSourceUrl() {
-  const baseUrl = (process.env.OPENAI_BASE_URL || "https://opencode.ai/zen/go/v1").replace(/\/+$/, "");
-  return `${baseUrl}/chat/completions`;
+  const value = (process.env.OPENAI_BASE_URL || "https://opencode.ai/zen/go/v1").replace(/\/+$/, "");
+  if (/\/chat\/completions$/i.test(value)) return value;
+  return `${value}/chat/completions`;
 }
 
 function normalizeOpenAIWebResults(payload) {
