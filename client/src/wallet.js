@@ -18,9 +18,11 @@ export async function connectWallet() {
 
   const accounts = await provider.request({ method: "eth_requestAccounts" });
   const chainIdHex = await provider.request({ method: "eth_chainId" });
+  const connectedAccounts = Array.isArray(accounts) ? accounts.filter(isAddress) : [];
   return {
     provider,
-    wallet: accounts?.[0] || null,
+    wallet: connectedAccounts[0] || null,
+    accounts: connectedAccounts,
     chainId: String(Number(chainIdHex))
   };
 }
