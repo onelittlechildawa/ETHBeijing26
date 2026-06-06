@@ -33,6 +33,7 @@ Optional search and repository credentials:
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
+XAPI_TWITTER_SEARCH_COUNT=20
 ```
 
 Optional daily hot project list:
@@ -59,7 +60,7 @@ The notary private key must be a testnet-only issuer wallet. ChainLens writes on
 npm run deploy:notary --workspace server
 ```
 
-Without xAPI, ChainLens still fetches user-provided websites, GitHub links, and PDF whitepapers. Set `XAPI_KEY` or `XAPI_API_KEY` to enable xAPI web search through `action.xapi.to` using `XAPI_SEARCH_ACTION` (defaults to `web.search`). `XAPI_SEARCH_URL` is still supported for legacy xapi.to-compatible endpoints.
+Without xAPI, ChainLens still fetches user-provided websites, GitHub links, and PDF whitepapers. Set `XAPI_KEY` or `XAPI_API_KEY` to enable xAPI web search through `action.xapi.to` using `XAPI_SEARCH_ACTION` (defaults to `web.search`). The Community Resource Agent also uses xAPI Twitter/X search (`twitter.search_timeline`) and reads up to `XAPI_TWITTER_SEARCH_COUNT` posts. `XAPI_SEARCH_URL` is still supported for legacy xapi.to-compatible endpoints.
 
 ## Vercel Deployment
 
@@ -88,6 +89,7 @@ Optional:
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
+XAPI_TWITTER_SEARCH_COUNT=20
 CRON_SECRET=replace_with_a_long_random_value
 BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
 ```
@@ -254,6 +256,7 @@ DeepLX 仅用于中文界面下把英文报告文本翻译成中文。
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
+XAPI_TWITTER_SEARCH_COUNT=20
 ```
 
 可选的每日热门项目列表：
@@ -280,7 +283,7 @@ notary 私钥只能使用测试网出具方钱包。ChainLens 只把报告 hash 
 npm run deploy:notary --workspace server
 ```
 
-即使没有 xAPI，ChainLens 仍会抓取用户提供的网站、GitHub 链接和 PDF 白皮书。设置 `XAPI_KEY` 或 `XAPI_API_KEY` 后，后端会默认通过 `action.xapi.to` 的 `web.search` 做外部网页搜索；`XAPI_SEARCH_URL` 仅用于兼容旧版 xapi.to 端点。
+即使没有 xAPI，ChainLens 仍会抓取用户提供的网站、GitHub 链接和 PDF 白皮书。设置 `XAPI_KEY` 或 `XAPI_API_KEY` 后，后端会默认通过 `action.xapi.to` 的 `web.search` 做外部网页搜索；社区资源 Agent 还会通过 xAPI 的 `twitter.search_timeline` 在 X 上读取最多 `XAPI_TWITTER_SEARCH_COUNT` 条相关讨论；`XAPI_SEARCH_URL` 仅用于兼容旧版 xapi.to 端点。
 
 ## Vercel 部署
 
@@ -309,6 +312,7 @@ DEEPLX_API_URL=https://api.deeplx.org/replace_with_key/translate
 GITHUB_TOKEN=optional_public_repo_rate_limit_token
 XAPI_API_KEY=optional_xapi_key
 XAPI_SEARCH_ACTION=web.search
+XAPI_TWITTER_SEARCH_COUNT=20
 CRON_SECRET=replace_with_a_long_random_value
 BLOB_READ_WRITE_TOKEN=vercel_blob_read_write_token
 ```

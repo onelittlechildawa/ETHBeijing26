@@ -2,8 +2,10 @@ import { fetchJson } from "./http.js";
 
 const DEFAULT_ACTION_HOST = "action.xapi.to";
 const DEFAULT_SEARCH_ACTION_ID = "web.search";
+const DEFAULT_TWITTER_SEARCH_ACTION_ID = "twitter.search_timeline";
 const DEFAULT_TIMEOUT_MS = 20000;
 const DEFAULT_LIMIT = 5;
+const DEFAULT_TWEET_COUNT = 20;
 
 export function xapiSearchEnabled() {
   return Boolean(readApiKey());
@@ -11,13 +13,7 @@ export function xapiSearchEnabled() {
 
 export async function requestXapiSearch({ query, limit = DEFAULT_LIMIT }) {
   const apiKey = readApiKey();
-  if (!apiKey) {
-    return {
-      status: "disabled",
-      raw: null,
-      message: "Set XAPI_KEY or XAPI_API_KEY to enable xAPI external web search."
-    };
-  }
+  if (!apiKey) return disabledResult("xAPI external web search");
 
   const searchUrl = stringEnv("XAPI_SEARCH_URL");
   if (searchUrl) {
@@ -27,16 +23,46 @@ export async function requestXapiSearch({ query, limit = DEFAULT_LIMIT }) {
   return requestActionSearch({ apiKey, query });
 }
 
+export async function requestXapiTwitterSearch({ query, count = DEFAULT_TWEET_COUNT }) {
+  const actionId = stringEnv("XAPI_TWITTER_SEARCH_ACTION_ID") ||
+    stringEnv("XAPI_TWITTER_SEARCH_ACTION") ||
+    DEFAULT_TWITTER_SEARCH_ACTION_ID;
+
+  return requestXapiAction({
+    actionId,
+    input: {
+      raw_query: query,
+      count
+    },
+    provider: "xapi_twitter_search"
+  });
+}
+
+export async function requestXapiAction({ actionId, input, provider = "xapi_action" }) {
+  const apiKey = readApiKey();
+  if (!apiKey) return disabledResult("xAPI actions");
+  return requestAction({ apiKey, actionId, input, provider });
+}
+
 function readApiKey() {
   return stringEnv("XAPI_KEY") || stringEnv("XAPI_API_KEY");
 }
 
 async function requestActionSearch({ apiKey, query }) {
+  const actionId = stringEnv("XAPI_SEARCH_ACTION_ID") || stringEnv("XAPI_SEARCH_ACTION") || DEFAULT_SEARCH_ACTION_ID;
+  return requestAction({
+    apiKey,
+    actionId,
+    input: { q: query },
+    provider: "xapi_action"
+  });
+}
+
+async function requestAction({ apiKey, actionId, input, provider }) {
   const baseUrl = actionBaseUrl();
   const url = `${baseUrl}/v1/actions/execute`;
   assertCredentialTarget(url);
 
-  const actionId = stringEnv("XAPI_SEARCH_ACTION_ID") || stringEnv("XAPI_SEARCH_ACTION") || DEFAULT_SEARCH_ACTION_ID;
   const raw = await fetchJson(url, {
     method: "POST",
     retries: 1,
@@ -47,7 +73,7 @@ async function requestActionSearch({ apiKey, query }) {
     },
     body: JSON.stringify({
       action_id: actionId,
-      input: { q: query }
+      input
     })
   });
 
@@ -55,9 +81,17 @@ async function requestActionSearch({ apiKey, query }) {
   return {
     status: "ok",
     raw,
-    provider: "xapi_action",
+    provider,
     actionId,
     url
+  };
+}
+
+function disabledResult(feature) {
+  return {
+    status: "disabled",
+    raw: null,
+    message: `Set XAPI_KEY or XAPI_API_KEY to enable ${feature}.`
   };
 }
 

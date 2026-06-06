@@ -1,17 +1,27 @@
 import { requestStructuredAI } from "./openai.js";
+import { requestXapiTwitterSearch } from "./xapi.js";
 
 const VALID_STATUSES = new Set(["ok", "partial", "error", "not_configured"]);
 const VALID_SEVERITIES = new Set(["critical", "high", "medium", "low", "info"]);
 const VALID_PRIORITIES = new Set(["urgent", "high", "medium", "low"]);
 const PRIORITY_WEIGHT = { urgent: 4, high: 3, medium: 2, low: 1 };
+const COMMUNITY_RISK_RE = /\b(scam|rug|rugpull|exploit|hack|hacked|phish|phishing|drainer|stolen|blacklist|fraud|ponzi|honeypot|can't withdraw|cannot withdraw|withdrawal issue)\b|跑路|诈骗|钓鱼|被盗|黑客|黑名单|割韭菜/i;
+const COMMUNITY_PROMO_RE = /\b(airdrop|giveaway|presale|whitelist|claim now|100x|pump|moon|free mint|guaranteed)\b|空投|预售|白名单|百倍|暴涨|稳赚/i;
+const COMMUNITY_DELIVERY_RE = /\b(mainnet|launch|shipped|release|audit|governance|proposal|integration|partnership|docs|testnet|upgrade)\b|主网|上线|发布|审计|治理|提案|集成|合作|升级/i;
 
 export async function runAgentOrchestrator(context) {
-  const baseAgents = [
-    buildResearchAgent(context),
-    buildOpenSourceReviewAgent(context),
-    buildOnchainRiskAgent(context),
-    buildSynthesisAgent(context)
+  const researchAgent = buildResearchAgent(context);
+  const communityResourceAgent = await buildCommunityResourceAgent(context);
+  const openSourceReviewAgent = buildOpenSourceReviewAgent(context);
+  const onchainRiskAgent = buildOnchainRiskAgent(context);
+  const preSynthesisAgents = [
+    researchAgent,
+    communityResourceAgent,
+    openSourceReviewAgent,
+    onchainRiskAgent
   ];
+  const synthesisAgent = buildSynthesisAgent({ ...context, upstreamAgents: preSynthesisAgents });
+  const baseAgents = [...preSynthesisAgents, synthesisAgent];
   const recommendationAgent = await buildRecommendationAgent({ ...context, agents: baseAgents });
   return [...baseAgents, recommendationAgent];
 }
@@ -328,23 +338,397 @@ function buildOnchainRiskAgent({ tokenReports = [], localFindings = [] }) {
   });
 }
 
-function buildSynthesisAgent({ openai, localFindings = [], summary }) {
+async function buildCommunityResourceAgent(context) {
+  const query = buildCommunitySearchQuery(context);
+  if (!query) {
+    return normalizeAgent({
+      id: "community-resource-agent",
+      name: "社区资源 Agent",
+      status: "partial",
+      summary: "No stable project name, ticker, or social handle was available for X community search.",
+      confidence: 0.38,
+      findings: [
+        agentFinding({
+          dimension: "community",
+          title: "X community search could not be scoped",
+          severity: "low",
+          confidence: 0.48,
+          evidence: "No project search term available",
+          context: "Add an official project name, ticker, website, or X profile so community signals can be collected."
+        })
+      ],
+      evidenceCount: 0,
+      sources: [{ name: "xAPI Twitter Search", status: "empty", message: "No search query available" }],
+      meta: { query: null, tweets: [] }
+    });
+  }
+
+  try {
+    const count = communityTweetCount();
+    const result = await requestXapiTwitterSearch({ query, count });
+    if (result.status !== "ok") {
+      return normalizeAgent({
+        id: "community-resource-agent",
+        name: "社区资源 Agent",
+        status: normalizeStatus(result.status, "partial"),
+        summary: result.message || "xAPI Twitter search is not configured, so community signals were not collected.",
+        confidence: 0.42,
+        findings: [
+          agentFinding({
+            dimension: "community",
+            title: "X community source was unavailable",
+            severity: "low",
+            confidence: 0.56,
+            evidence: result.message || result.status,
+            context: "Community-side risk should be reviewed manually or rerun after xAPI is configured."
+          })
+        ],
+        evidenceCount: 0,
+        sources: [{ name: "xAPI Twitter Search", status: result.status, message: result.message }],
+        meta: { query, tweets: [] }
+      });
+    }
+
+    const tweets = normalizeCommunityTweets(result.raw).slice(0, count);
+    const findings = buildCommunityFindings({ query, tweets });
+    const sourceUrl = result.actionId ? `${result.url}#${result.actionId}` : result.url;
+
+    return normalizeAgent({
+      id: "community-resource-agent",
+      name: "社区资源 Agent",
+      status: tweets.length ? "ok" : "partial",
+      summary: summarizeCommunityTweets({ tweets, findings, query }),
+      confidence: tweets.length ? communityConfidence(tweets, findings) : 0.44,
+      findings,
+      evidenceCount: tweets.length,
+      sources: [
+        {
+          name: "xAPI Twitter Search",
+          status: tweets.length ? "ok" : "empty",
+          url: sourceUrl
+        }
+      ],
+      meta: {
+        query,
+        metrics: communityMetrics(tweets),
+        tweets: tweets.slice(0, 8)
+      }
+    });
+  } catch (error) {
+    return normalizeAgent({
+      id: "community-resource-agent",
+      name: "社区资源 Agent",
+      status: "error",
+      summary: "X community resource collection failed; other agents can still complete the report.",
+      confidence: 0.35,
+      findings: [
+        agentFinding({
+          dimension: "community",
+          title: "X community collection failed",
+          severity: "low",
+          confidence: 0.5,
+          evidence: error.message,
+          context: "Rerun after xAPI is reachable, or review X manually for project-specific risk and credibility signals."
+        })
+      ],
+      evidenceCount: 0,
+      sources: [{ name: "xAPI Twitter Search", status: "error", message: error.message }],
+      meta: { query, tweets: [] }
+    });
+  }
+}
+
+function buildCommunitySearchQuery({ project, tokenReports = [] }) {
+  const projectTerms = [
+    meaningfulProjectTerm(project?.name),
+    hostTerm(project?.website),
+    ...(project?.surfaces?.socials || []).map((surface) => xHandleTerm(surface.url)),
+    ...(project?.contracts || []).map((contract) => meaningfulProjectTerm(contract.symbol || contract.name)),
+    ...tokenReports.map((report) => meaningfulProjectTerm(report.token?.symbol || report.token?.name)),
+    ...tokenReports.flatMap((report) => (report.token?.socials || []).map((social) => xHandleTerm(social.url)))
+  ];
+
+  const terms = uniqueStrings(projectTerms)
+    .filter((term) => term && !/^unknown project$/i.test(term) && !/^project 0x/i.test(term))
+    .slice(0, 5);
+
+  if (!terms.length) return null;
+  return terms.map(formatXSearchTerm).join(" OR ");
+}
+
+function normalizeCommunityTweets(raw) {
+  const candidates = [];
+  collectTweetCandidates(raw, candidates, new Set());
+  const seen = new Set();
+  return candidates
+    .map(normalizeTweetCandidate)
+    .filter((tweet) => tweet.text)
+    .filter((tweet) => {
+      const key = tweet.id || tweet.text;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => right.engagement - left.engagement)
+    .slice(0, 40);
+}
+
+function collectTweetCandidates(value, output, seen) {
+  if (!value || output.length >= 80) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectTweetCandidates(item, output, seen);
+    return;
+  }
+  if (typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+
+  const normalized = normalizeTweetCandidate(value);
+  if (normalized.text) output.push(value);
+
+  for (const key of ["data", "results", "items", "tweets", "timeline", "entries", "content", "result", "tweet", "legacy"]) {
+    collectTweetCandidates(value[key], output, seen);
+  }
+}
+
+function normalizeTweetCandidate(value = {}) {
+  const tweet = value.tweet || value.result || value.item || value;
+  const legacy = tweet.legacy || value.legacy || tweet;
+  const noteText = tweet.note_tweet?.note_tweet_results?.result?.text || legacy.note_tweet?.note_tweet_results?.result?.text;
+  const text = String(legacy.full_text || legacy.text || tweet.full_text || tweet.text || noteText || "").trim();
+  const id = String(legacy.id_str || legacy.id || tweet.rest_id || tweet.id_str || tweet.id || value.id_str || value.id || "").trim();
+  const author = normalizeTweetAuthor(tweet, value);
+  const metrics = {
+    likes: toSafeNumber(legacy.favorite_count ?? tweet.favorite_count ?? value.favorite_count),
+    retweets: toSafeNumber(legacy.retweet_count ?? tweet.retweet_count ?? value.retweet_count),
+    replies: toSafeNumber(legacy.reply_count ?? tweet.reply_count ?? value.reply_count),
+    quotes: toSafeNumber(legacy.quote_count ?? tweet.quote_count ?? value.quote_count),
+    views: toSafeNumber(legacy.views_count ?? legacy.view_count ?? tweet.views_count ?? tweet.view_count ?? value.views_count)
+  };
+
+  return {
+    id,
+    text,
+    author,
+    createdAt: legacy.created_at || tweet.created_at || value.created_at || null,
+    metrics,
+    engagement: metrics.likes + metrics.retweets * 2 + metrics.replies * 2 + metrics.quotes * 2 + Math.floor(metrics.views / 10000),
+    url: id ? `https://x.com/${author.handle || "i"}/status/${id}` : null,
+    flags: classifyCommunityText(text)
+  };
+}
+
+function normalizeTweetAuthor(tweet = {}, value = {}) {
+  const author = tweet.author || tweet.user || value.author || value.user || tweet.core?.user_results?.result || {};
+  const legacy = author.legacy || author;
+  return {
+    name: legacy.name || author.name || null,
+    handle: legacy.screen_name || author.screen_name || author.username || null,
+    followers: toSafeNumber(legacy.followers_count ?? author.followers_count)
+  };
+}
+
+function buildCommunityFindings({ query, tweets }) {
+  if (!tweets.length) {
+    return [
+      agentFinding({
+        dimension: "community",
+        title: "No recent X community posts were collected",
+        severity: "low",
+        confidence: 0.52,
+        evidence: query,
+        context: "This can mean the query is too narrow, xAPI returned no posts, or the project has limited visible X discussion."
+      })
+    ];
+  }
+
+  const riskTweets = tweets.filter((tweet) => tweet.flags.risk);
+  const promoTweets = tweets.filter((tweet) => tweet.flags.promo);
+  const deliveryTweets = tweets.filter((tweet) => tweet.flags.delivery);
+  const findings = [
+    agentFinding({
+      dimension: "community",
+      title: "X community discussion was collected",
+      severity: "info",
+      confidence: 0.72,
+      evidence: `${tweets.length} post${tweets.length === 1 ? "" : "s"} matched: ${query}`,
+      context: "Community evidence is a candidate signal. It should be reconciled with official project surfaces and on-chain data."
+    })
+  ];
+
+  if (riskTweets.length) {
+    findings.push(agentFinding({
+      dimension: "community",
+      title: "X posts mention risk or incident language",
+      severity: riskTweets.length >= 3 ? "high" : "medium",
+      confidence: riskTweets.length >= 3 ? 0.74 : 0.64,
+      evidence: sampleTweetEvidence(riskTweets),
+      context: "Risk-language posts are not proof by themselves, but repeated mentions should be reviewed before trusting the project narrative."
+    }));
+  }
+
+  if (promoTweets.length >= Math.max(3, Math.ceil(tweets.length * 0.25))) {
+    findings.push(agentFinding({
+      dimension: "community",
+      title: "X discussion is promotion-heavy",
+      severity: "medium",
+      confidence: 0.62,
+      evidence: `${promoTweets.length} promotional post${promoTweets.length === 1 ? "" : "s"} among ${tweets.length}`,
+      context: "Airdrop, giveaway, pump, or guaranteed-return language can make community sentiment noisy and should be separated from evidence-backed adoption."
+    }));
+  }
+
+  if (deliveryTweets.length) {
+    findings.push(agentFinding({
+      dimension: "delivery",
+      title: "X posts reference delivery or governance activity",
+      severity: "info",
+      confidence: 0.62,
+      evidence: sampleTweetEvidence(deliveryTweets),
+      context: "Delivery-language posts can support the project narrative when matched to official releases, governance proposals, audits, or deployments."
+    }));
+  }
+
+  if (tweets.length < 5) {
+    findings.push(agentFinding({
+      dimension: "community",
+      title: "Visible X discussion volume is thin",
+      severity: "low",
+      confidence: 0.58,
+      evidence: `${tweets.length} matching post${tweets.length === 1 ? "" : "s"}`,
+      context: "Thin community visibility is an evidence gap, not a risk label. Check official social handles and alternate spellings."
+    }));
+  }
+
+  return orderFindings(dedupeFindings(findings)).slice(0, 8);
+}
+
+function summarizeCommunityTweets({ tweets, findings, query }) {
+  if (!tweets.length) return `Searched X for "${query}", but no usable project-related posts were collected.`;
+  const metrics = communityMetrics(tweets);
+  const material = findings.filter((finding) => ["critical", "high", "medium"].includes(finding.severity));
+  return `Collected ${tweets.length} X post${tweets.length === 1 ? "" : "s"} for "${query}"; ${metrics.riskCount} risk-language, ${metrics.promoCount} promotion-heavy, and ${metrics.deliveryCount} delivery/governance mention${metrics.deliveryCount === 1 ? "" : "s"} found${material.length ? `, with ${material.length} item${material.length === 1 ? "" : "s"} needing follow-up` : ""}.`;
+}
+
+function communityMetrics(tweets) {
+  return {
+    riskCount: tweets.filter((tweet) => tweet.flags.risk).length,
+    promoCount: tweets.filter((tweet) => tweet.flags.promo).length,
+    deliveryCount: tweets.filter((tweet) => tweet.flags.delivery).length,
+    totalEngagement: tweets.reduce((sum, tweet) => sum + tweet.engagement, 0)
+  };
+}
+
+function communityConfidence(tweets, findings) {
+  const materialCount = findings.filter((finding) => ["high", "medium"].includes(finding.severity)).length;
+  const base = tweets.length >= 10 ? 0.74 : tweets.length >= 5 ? 0.66 : 0.56;
+  return Math.min(0.82, base + materialCount * 0.03);
+}
+
+function classifyCommunityText(text) {
+  return {
+    risk: COMMUNITY_RISK_RE.test(text),
+    promo: COMMUNITY_PROMO_RE.test(text),
+    delivery: COMMUNITY_DELIVERY_RE.test(text)
+  };
+}
+
+function sampleTweetEvidence(tweets) {
+  return tweets
+    .slice(0, 3)
+    .map((tweet) => {
+      const prefix = tweet.author.handle ? `@${tweet.author.handle}` : "X post";
+      return `${prefix}: ${tweet.text.slice(0, 160)}${tweet.text.length > 160 ? "..." : ""}`;
+    })
+    .join(" | ");
+}
+
+function communityTweetCount() {
+  const value = Number(process.env.XAPI_TWITTER_SEARCH_COUNT || 20);
+  if (!Number.isFinite(value)) return 20;
+  return Math.max(5, Math.min(40, Math.round(value)));
+}
+
+function meaningfulProjectTerm(value) {
+  const text = String(value || "").trim();
+  if (!text || /^unknown project$/i.test(text) || /^project 0x/i.test(text)) return null;
+  return text.replace(/^[$@#]+/, "").slice(0, 64);
+}
+
+function hostTerm(value) {
+  try {
+    const hostname = new URL(value).hostname.replace(/^www\./, "");
+    return hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function xHandleTerm(value) {
+  try {
+    const url = new URL(value);
+    if (!/(^|\.)x\.com$|(^|\.)twitter\.com$/i.test(url.hostname)) return null;
+    const handle = url.pathname.split("/").filter(Boolean)[0];
+    if (!handle || ["home", "search", "share", "intent"].includes(handle.toLowerCase())) return null;
+    return handle.replace(/^@/, "");
+  } catch {
+    return null;
+  }
+}
+
+function formatXSearchTerm(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return /\s/.test(text) ? `"${text.replace(/"/g, "")}"` : text;
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function toSafeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function buildSynthesisAgent({ openai, localFindings = [], summary, upstreamAgents = [] }) {
   const openaiFindings = openai?.findings || [];
   const findingReviews = openai?.findingReviews || [];
+  const communityAgent = upstreamAgents.find((agent) => agent.id === "community-resource-agent");
+  const upstreamMaterialFindings = upstreamAgents
+    .flatMap((agent) => (agent.findings || []).map((finding) => ({
+      ...finding,
+      evidence: `${agent.name}: ${finding.evidence}`,
+      context: finding.context || agent.summary
+    })))
+    .filter((finding) => ["critical", "high", "medium"].includes(finding.severity))
+    .slice(0, 4);
+  const synthesisFindings = orderFindings(dedupeFindings([
+    ...openaiFindings,
+    ...upstreamMaterialFindings
+  ])).slice(0, 6);
+  const communityTail = communityAgent?.evidenceCount
+    ? ` 社区资源 Agent contributed ${communityAgent.evidenceCount} X post${communityAgent.evidenceCount === 1 ? "" : "s"} to this synthesis pass.`
+    : "";
+
   return normalizeAgent({
     id: "synthesis-agent",
     name: "Synthesis Agent",
     status: normalizeStatus(openai?.status, "not_configured"),
-    summary: openai?.summary || summary?.description || "Deterministic findings are available; model synthesis is not configured.",
+    summary: `${openai?.summary || summary?.description || "Deterministic findings are available; model synthesis is not configured."}${communityTail}`,
     confidence: openai?.status === "ok" || openai?.status === "mock" ? 0.78 : 0.54,
-    findings: openaiFindings.slice(0, 6),
-    evidenceCount: localFindings.length + findingReviews.length,
+    findings: synthesisFindings,
+    evidenceCount: localFindings.length + findingReviews.length + upstreamAgents.reduce((sum, agent) => sum + (agent.evidenceCount || 0), 0),
     sources: [
       {
         name: "OpenAI-compatible Project Analysis",
         status: openai?.status || "not_configured",
         message: openai?.message
-      }
+      },
+      ...upstreamAgents.map((agent) => ({
+        name: agent.name,
+        status: agent.status,
+        message: agent.summary
+      }))
     ]
   });
 }
@@ -412,6 +796,13 @@ async function requestRecommendationAI(context, fallbackRecommendations) {
       summary: agent.summary,
       evidenceCount: agent.evidenceCount
     })),
+    agentFindings: (context.agents || [])
+      .flatMap((agent) => summarizeFindings(agent.findings || []).map((finding) => ({
+        ...finding,
+        agentId: agent.id,
+        agentName: agent.name
+      })))
+      .slice(0, 16),
     fallbackRecommendations
   };
 
@@ -425,6 +816,7 @@ async function requestRecommendationAI(context, fallbackRecommendations) {
       "Use scoreImpact 0-4 for evidence-backed projects with routine record-keeping only, 5-12 for missing surfaces or moderate unresolved gaps, 13-20 for high-priority evidence gaps, and 21-30 only for urgent or material unresolved risk.",
       "Do not provide investment advice, buy or sell instructions, price predictions, guaranteed outcomes, or scam labels.",
       "Prioritize narrative-to-delivery gaps when project claims are not backed by verified contracts, active repositories, audits, governance, or other reproducible artifacts.",
+      "Use Community Resource Agent findings from X as candidate social evidence; recommend verification when risk-language, incident-language, or promotion-heavy discussion appears.",
       "Use urgent only for critical findings, honeypot-like behavior, owner balance modification, or direct wallet exposure.",
       "Keep recommendations concrete and evidence-backed."
     ].join(" "),
@@ -433,7 +825,7 @@ async function requestRecommendationAI(context, fallbackRecommendations) {
   });
 }
 
-function buildRuleRecommendations({ project, projectEvidence, tokenReports = [], findings = [], localFindings = [], walletExposure = null }) {
+function buildRuleRecommendations({ project, projectEvidence, tokenReports = [], findings = [], localFindings = [], walletExposure = null, agents = [] }) {
   const activeFindings = findings.length ? findings : localFindings;
   const tokenSignals = tokenReports.flatMap((report) => report.signals || []);
   const recommendations = [];
@@ -475,6 +867,19 @@ function buildRuleRecommendations({ project, projectEvidence, tokenReports = [],
       action: "Review and revoke unnecessary approvals for this project before further interaction.",
       reason: "Wallet-specific exposure can remain risky even when project-level evidence is mixed.",
       evidence: walletFinding.evidence || walletFinding.title
+    }));
+  }
+
+  const communityAgent = agents.find((agent) => agent.id === "community-resource-agent");
+  const materialCommunityFinding = (communityAgent?.findings || [])
+    .find((finding) => ["high", "medium"].includes(finding.severity));
+  if (materialCommunityFinding) {
+    recommendations.push(recommendation({
+      priority: materialCommunityFinding.severity === "high" ? "high" : "medium",
+      title: "Review X community risk signals",
+      action: "Inspect the matching X posts, separate verified incident reports from promotion or rumor, and reconcile them with official project updates.",
+      reason: "Community-side signals can surface incidents or narrative noise before they appear in official docs, but they need manual source verification.",
+      evidence: materialCommunityFinding.evidence || materialCommunityFinding.title
     }));
   }
 
