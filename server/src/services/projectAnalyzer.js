@@ -46,11 +46,15 @@ export async function analyzeProject(input) {
     contractProfiles
   });
   const recommendations = extractAgentRecommendations(agents);
+  const summaryActions = buildSummaryActions({ summary, recommendations, findings: adjudicated.activeFindings });
 
   return {
     generatedAt: new Date().toISOString(),
     project,
-    summary,
+    summary: {
+      ...summary,
+      actions: summaryActions
+    },
     dimensions,
     agents,
     recommendations,
@@ -428,6 +432,41 @@ function summarizeProject(findings, tokenReports) {
     counts,
     tokenCount: tokenReports.length
   };
+}
+
+function buildSummaryActions({ summary, recommendations = [], findings = [] }) {
+  const actions = recommendations
+    .filter((item) => item?.title && (item.action || item.reason))
+    .slice(0, 3)
+    .map((item) => ({
+      priority: item.priority || priorityForSummary(summary),
+      title: item.title,
+      action: item.action,
+      reason: item.reason,
+      evidence: item.evidence
+    }));
+
+  if (actions.length) return actions;
+
+  const materialFinding = findings.find((finding) => ["critical", "high", "medium"].includes(finding.severity));
+  return [
+    {
+      priority: priorityForSummary(summary),
+      title: summary.level === "low" ? "Keep a manual diligence trail" : "Review the highest-risk evidence first",
+      action: summary.level === "low"
+        ? "Record official docs, repository, governance, and contract links before relying on the project."
+        : "Start with the highest-severity finding, verify it against live sources, and document whether it is mitigated.",
+      reason: summary.description,
+      evidence: materialFinding?.evidence || `${summary.counts.critical} critical, ${summary.counts.high} high, ${summary.counts.medium} medium findings`
+    }
+  ];
+}
+
+function priorityForSummary(summary) {
+  if (summary.counts?.critical > 0 || summary.level === "high") return "urgent";
+  if (summary.counts?.high > 0 || summary.level === "watch") return "high";
+  if (summary.level === "incomplete") return "medium";
+  return "low";
 }
 
 function buildProjectDimensions(findings, tokenReports) {
