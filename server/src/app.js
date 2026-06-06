@@ -7,7 +7,6 @@ import { analyzeProject } from "./services/projectAnalyzer.js";
 import { requestProjectOpenAI } from "./services/openai.js";
 import { attestProjectReport, verifyProjectReport } from "./services/reportNotary.js";
 import { SUPPORTED_CHAINS } from "./services/chains.js";
-import { translateTexts } from "./services/translate.js";
 
 const app = express();
 const isVercel = process.env.VERCEL === "1";
@@ -35,7 +34,6 @@ app.post("/api/project/verify", projectVerifyHandler);
 app.get("/api/hot-projects", hotProjectsHandler);
 app.get("/api/cron/hot-projects", hotProjectsCronHandler);
 app.post("/api/openai/project", openAIProjectHandler);
-app.post("/api/translate", translateHandler);
 
 async function analyzeHandler(req, res) {
   const input = req.method === "POST" ? req.body : req.query;
@@ -258,24 +256,6 @@ async function openAIProjectHandler(req, res) {
     res.status(500).json({
       error: "OPENAI_PROJECT_FAILED",
       message: "ChainLens could not complete OpenAI-compatible project analysis.",
-      detail: process.env.NODE_ENV === "production" ? undefined : error.message
-    });
-  }
-}
-
-async function translateHandler(req, res) {
-  try {
-    const result = await translateTexts({
-      texts: req.body?.texts,
-      targetLang: req.body?.targetLang || "ZH",
-      sourceLang: req.body?.sourceLang || "EN"
-    });
-    res.json(result);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      error: "TRANSLATION_FAILED",
-      message: "ChainLens could not translate this report.",
       detail: process.env.NODE_ENV === "production" ? undefined : error.message
     });
   }

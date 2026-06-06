@@ -166,19 +166,3 @@ export async function verifyProjectReport(payload) {
   }
   return data;
 }
-
-export async function translateReportTexts({ texts, targetLang = "ZH", sourceLang = "EN" }) {
-  const url = new URL("/api/translate", API_BASE);
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ texts, targetLang, sourceLang })
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Translation failed");
-  }
-  return data;
-}

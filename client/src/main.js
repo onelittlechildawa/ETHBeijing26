@@ -27,7 +27,7 @@ import {
   Users,
   WalletCards
 } from "lucide";
-import { analyzeProject, attestProjectReport, fetchHotProjects, translateReportTexts } from "./api.js";
+import { analyzeProject, attestProjectReport, fetchHotProjects } from "./api.js";
 import { analyzeWalletExposure, connectWallet, hasWalletProvider } from "./wallet.js";
 import "./styles.css";
 
@@ -121,6 +121,7 @@ const messages = {
     progressScoring: "Score findings",
     progressAiReview: "Run analyst review",
     progressAgentReview: "Coordinate agent review",
+    progressLocalization: "Prepare Chinese and English report text",
     progressReport: "Assemble report",
     queryRequired: "Enter a project, website, or contract address.",
     projectFindings: "Project findings",
@@ -205,8 +206,6 @@ const messages = {
     credentialOpenContract: "Open contract",
     credentialUnavailable: "Generate a report to create a credential.",
     credentialStored: "Stored on Sepolia",
-    translatingText: "Translating...",
-    translationUnavailable: "Translation pending.",
     summary: "Summary",
     recommendations: "Recommendations",
     suppressed: "Suppressed",
@@ -292,7 +291,8 @@ const messages = {
     progressContractRefresh: "刷新新发现合约",
     progressScoring: "计算风险发现",
     progressAiReview: "运行分析员复核",
-    progressAgentReview: "协调 Agent 复核",
+    progressAgentReview: "协调 AI 复核",
+    progressLocalization: "准备中英文结果",
     progressReport: "生成报告",
     queryRequired: "请输入项目、官网或合约地址。",
     projectFindings: "发现的问题",
@@ -377,8 +377,6 @@ const messages = {
     credentialOpenContract: "打开合约",
     credentialUnavailable: "生成报告后才能创建凭证。",
     credentialStored: "已写入 Sepolia",
-    translatingText: "正在翻译...",
-    translationUnavailable: "这段结果还在翻译。",
     summary: "摘要",
     recommendations: "建议",
     suppressed: "已压制",
@@ -397,11 +395,6 @@ let state = {
   address: "",
   activeTab: "analyze",
   analysisProgress: null,
-  translations: {
-    loading: false,
-    reportKey: null,
-    items: {}
-  },
   hotProjects: {
     loading: false,
     loaded: false,
@@ -481,12 +474,6 @@ function bindEvents() {
     state = { ...state, locale };
     saveLocale(locale);
     render();
-    if (locale === "zh" && state.report) {
-      loadReportTranslations(state.report);
-    }
-    if (locale === "zh" && state.hotProjects.digest) {
-      loadHotProjectTranslations(state.hotProjects.digest);
-    }
   });
 
   document.querySelector("#analyze-form").addEventListener("submit", async (event) => {
@@ -582,11 +569,6 @@ async function runAnalysis({ chainId, query, address }) {
     credential: {
       loading: false,
       error: null
-    },
-    translations: {
-      loading: false,
-      reportKey: null,
-      items: {}
     }
   };
   render();
@@ -604,9 +586,6 @@ async function runAnalysis({ chainId, query, address }) {
     const history = rememberReport(report, { query, chainId, address });
     state = { ...state, loading: false, report, history, analysisProgress: null };
     render();
-    if (state.locale === "zh") {
-      loadReportTranslations(report);
-    }
 
     if (state.wallet.provider && state.wallet.account) {
       await runWalletExposure(report);
@@ -659,191 +638,33 @@ async function createReportCredentialOnChain() {
   render();
 }
 
-async function loadReportTranslations(report) {
-  if (!report || state.locale !== "zh") return;
-  const reportKey = report.generatedAt || `${report.project?.name}-${report.summary?.projectScore}`;
-
-  const texts = collectReportTranslationTexts(report)
-    .filter((text) => !state.translations.items?.[text]);
-  if (!texts.length) return;
-
-  state = {
-    ...state,
-    translations: {
-      ...state.translations,
-      loading: true,
-      reportKey,
-      items: state.translations.items || {}
-    }
-  };
-  render();
-
-  try {
-    const result = await translateReportTexts({ texts, targetLang: "ZH", sourceLang: "EN" });
-    state = {
-      ...state,
-      translations: {
-        ...state.translations,
-        loading: false,
-        reportKey,
-        items: {
-          ...(state.translations.items || {}),
-          ...(result.translations || {})
-        }
-      }
-    };
-  } catch {
-    state = {
-      ...state,
-      translations: {
-        ...state.translations,
-        loading: false,
-        reportKey
-      }
-    };
-  }
-  render();
-}
-
-async function loadHotProjectTranslations(digest) {
-  if (!digest || state.locale !== "zh") return;
-  const reportKey = `hot-${digest.generatedAt || digest.sourceStatus || "latest"}`;
-  const texts = collectHotProjectTranslationTexts(digest)
-    .filter((text) => !state.translations.items?.[text]);
-  if (!texts.length) return;
-
-  state = {
-    ...state,
-    translations: {
-      ...state.translations,
-      loading: true,
-      reportKey,
-      items: state.translations.items || {}
-    }
-  };
-  render();
-
-  try {
-    const result = await translateReportTexts({ texts, targetLang: "ZH", sourceLang: "EN" });
-    state = {
-      ...state,
-      translations: {
-        ...state.translations,
-        loading: false,
-        reportKey,
-        items: {
-          ...(state.translations.items || {}),
-          ...(result.translations || {})
-        }
-      }
-    };
-  } catch {
-    state = {
-      ...state,
-      translations: {
-        ...state.translations,
-        loading: false,
-        reportKey
-      }
-    };
-  }
-  render();
-}
-
-function collectReportTranslationTexts(report) {
-  const texts = [];
-  const add = (value) => {
-    const text = String(value || "").trim();
-    if (!shouldTranslateClientText(text)) return;
-    texts.push(text);
-  };
-
-  add(report.skepticReview?.headline);
-  (report.summary?.actions || []).forEach((action) => {
-    add(action.title);
-    add(action.action);
-    add(action.reason);
-    add(action.evidence);
-  });
-  (report.recommendations || []).forEach((recommendation) => {
-    add(recommendation.title);
-    add(recommendation.action);
-    add(recommendation.reason);
-    add(recommendation.evidence);
-  });
-  (report.skepticReview?.nextQuestions || []).forEach(add);
-  (report.skepticReview?.claimAudit || []).forEach((claim) => {
-    add(claim.claim);
-    add(claim.question);
-  });
-  add(report.openai?.summary);
-  (report.findings || []).forEach((finding) => {
-    add(finding.title);
-    add(finding.context);
-    add(finding.evidence);
-  });
-  (report.suppressedFindings || []).forEach((finding) => {
-    add(finding.title);
-    add(finding.suppressionReason || finding.review?.reason || finding.context);
-    add(finding.suppressionEvidence || finding.review?.evidence || finding.evidence);
-  });
-  (report.openai?.findings || []).forEach((finding) => {
-    add(finding.title);
-    add(finding.context);
-    add(finding.evidence);
-  });
-  (report.agents || []).forEach((agent) => add(agent.summary));
-  (report.projectEvidence?.artifacts || []).forEach((artifact) => {
-    add(artifact.title);
-    add(artifact.summary);
-  });
-
-  return [...new Set(texts)].slice(0, 60);
-}
-
-function collectHotProjectTranslationTexts(digest) {
-  const texts = [];
-  const add = (value) => {
-    const text = String(value || "").trim();
-    if (!shouldTranslateClientText(text)) return;
-    texts.push(text);
-  };
-
-  (digest.items || []).forEach((item) => {
-    add(item.skepticReview?.headline);
-    (item.skepticReview?.nextQuestions || []).slice(0, 2).forEach(add);
-    (item.primaryFindings || []).slice(0, 2).forEach((finding) => {
-      add(finding.title);
-      add(finding.context);
-    });
-    (item.agentSummaries || item.skepticReview?.agentReview?.summaries || []).slice(0, 3).forEach((agent) => add(agent.summary));
-  });
-
-  return [...new Set(texts)].slice(0, 80);
-}
-
-function shouldTranslateClientText(text) {
-  if (!text || text.length > 1200) return false;
-  if (/[\u4e00-\u9fff]/.test(text)) return false;
-  if (!/[a-zA-Z]/.test(text)) return false;
-  if (/^https?:\/\//i.test(text)) return false;
-  if (/^0x[a-fA-F0-9]{8,}$/.test(text)) return false;
-  if (/^(N\/A|n\/a|unknown|ok|error)$/i.test(text)) return false;
-  if (/^[A-Z0-9_.:/-]{1,16}$/.test(text)) return false;
-  if (text.split(/\s+/).length === 1 && /^[A-Z][A-Za-z0-9_.-]{0,24}$/.test(text)) return false;
-  return true;
-}
-
-function displayText(text) {
+function displayText(text, scope = null) {
   const value = String(text || "").trim();
   if (!value || state.locale !== "zh") return value;
   const knownText = localizeRecommendationText(value);
   if (knownText !== value) return knownText;
-  if (state.translations.items?.[value]) return state.translations.items[value];
-  if (shouldTranslateClientText(value)) {
-    return state.translations.loading ? t("translatingText") : t("translationUnavailable");
+  return lookupLocalizedText(value, scope) || value;
+}
+
+function lookupLocalizedText(text, scope = null) {
+  if (!text || state.locale !== "zh") return "";
+  return lookupLocalizedTextInScope(scope, text)
+    || lookupLocalizedTextInScope(state.report, text)
+    || lookupLocalizedTextInScope(state.hotProjects.digest, text);
+}
+
+function lookupLocalizedTextInScope(scope, text) {
+  if (!scope) return "";
+  const direct = scope.localized?.zh?.texts?.[text];
+  if (direct) return direct;
+  if (scope.report?.localized?.zh?.texts?.[text]) return scope.report.localized.zh.texts[text];
+  if (Array.isArray(scope.items)) {
+    for (const item of scope.items) {
+      const localized = lookupLocalizedTextInScope(item, text);
+      if (localized) return localized;
+    }
   }
-  return value;
+  return "";
 }
 
 async function loadHotProjects({ force = false } = {}) {
@@ -883,9 +704,6 @@ async function loadHotProjects({ force = false } = {}) {
     };
   }
   render();
-  if (state.locale === "zh" && state.hotProjects.digest) {
-    loadHotProjectTranslations(state.hotProjects.digest);
-  }
 }
 
 async function connectWalletForReport() {
@@ -1160,7 +978,7 @@ function hotProjectCardTemplate(item) {
       </div>
       <div class="hot-verdict">
         <strong>${escapeHtml(localizeSkepticVerdict(skeptic.verdict))}</strong>
-        <span>${escapeHtml(displayText(localizeSkepticHeadline(skeptic.headline, skeptic.verdict)))}</span>
+        <span>${escapeHtml(displayText(localizeSkepticHeadline(skeptic.headline, skeptic.verdict, item), item))}</span>
       </div>
       <div class="hot-review-row">
         <span>${t("hypePressure")}: ${escapeHtml(localizeLevel(skeptic.hypePressure?.level))} / ${formatNumber(skeptic.hypePressure?.score || 0)}</span>
@@ -1172,7 +990,7 @@ function hotProjectCardTemplate(item) {
         <strong>${formatAgentCount(agents.length)}</strong>
       </div>
       ${(nextQuestion || finding) ? `
-        <p class="hot-question">${escapeHtml(displayText(nextQuestion || finding.context || finding.title))}</p>
+        <p class="hot-question">${escapeHtml(displayText(nextQuestion || finding.context || finding.title, item))}</p>
       ` : ""}
       ${item.pair?.url ? `<a class="hot-pair-link" href="${escapeHtml(item.pair.url)}" target="_blank" rel="noreferrer">${icon(ExternalLink)} <span>${escapeHtml(item.pair.name || item.pair.address || "Pair")}</span></a>` : ""}
     </article>
@@ -1181,7 +999,7 @@ function hotProjectCardTemplate(item) {
 
 function analysisProgressTemplate(progress) {
   const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
-  const detail = progress.detail ? `<span>${escapeHtml(progress.detail)}</span>` : "";
+  const detail = progress.detail ? `<span>${escapeHtml(localizeProgressDetail(progress))}</span>` : "";
   return `
     <div class="analysis-progress" role="status" aria-live="polite">
       <div class="progress-topline">
@@ -1577,7 +1395,7 @@ function skepticReviewTemplate(report) {
         </div>
         <span>${escapeHtml(localizeStatus(review.agentReview?.status || "partial"))}</span>
       </div>
-      <p class="skeptic-headline">${escapeHtml(displayText(localizeSkepticHeadline(review.headline, review.verdict)))}</p>
+      <p class="skeptic-headline">${escapeHtml(displayText(localizeSkepticHeadline(review.headline, review.verdict, report), report))}</p>
       <div class="skeptic-metrics">
         ${metric(t("hypePressure"), `${formatNumber(review.hypePressure?.score || 0)} / ${escapeHtml(localizeLevel(review.hypePressure?.level))}`)}
         ${metric(t("evidenceCoverage"), `${formatNumber(review.evidenceCoverage?.score || 0)} / ${escapeHtml(localizeLevel(review.evidenceCoverage?.level))}`)}
@@ -2037,9 +1855,6 @@ function loadHistoryItem(id) {
     }
   };
   render();
-  if (state.locale === "zh") {
-    loadReportTranslations(item.report);
-  }
 }
 
 function deleteHistoryItem(id) {
@@ -2120,7 +1935,7 @@ function buildMarkdownReport(report) {
   if (report.skepticReview) {
     lines.push(`## ${t("skepticReview")}`);
     lines.push(`- ${t("skepticVerdict")}: ${localizeSkepticVerdict(report.skepticReview.verdict)}`);
-    lines.push(`- ${t("summary")}: ${displayText(localizeSkepticHeadline(report.skepticReview.headline, report.skepticReview.verdict))}`);
+    lines.push(`- ${t("summary")}: ${displayText(localizeSkepticHeadline(report.skepticReview.headline, report.skepticReview.verdict, report), report)}`);
     lines.push(`- ${t("hypePressure")}: ${report.skepticReview.hypePressure?.score ?? "N/A"} / ${localizeLevel(report.skepticReview.hypePressure?.level)}`);
     lines.push(`- ${t("evidenceCoverage")}: ${report.skepticReview.evidenceCoverage?.score ?? "N/A"} / ${localizeLevel(report.skepticReview.evidenceCoverage?.level)}`);
     (report.skepticReview.nextQuestions || []).slice(0, 3).forEach((question, index) => {
@@ -2326,9 +2141,30 @@ function localizeProgressLabel(progress) {
     scoring: "progressScoring",
     ai_review: "progressAiReview",
     agent_review: "progressAgentReview",
+    localization: "progressLocalization",
     report: "progressReport"
   }[progress?.id];
   return key ? t(key) : progress?.label || "";
+}
+
+function localizeProgressDetail(progress) {
+  const detail = String(progress?.detail || "");
+  if (state.locale !== "zh") return detail;
+
+  const agentMatch = detail.match(/^(\d+)\s+agents?$/i);
+  if (agentMatch) return `${formatNumber(agentMatch[1])} 个 AI`;
+
+  const localFindingsMatch = detail.match(/^(\d+)\s+local findings?$/i);
+  if (localFindingsMatch) return `${formatNumber(localFindingsMatch[1])} 条本地发现`;
+
+  const targetMatch = detail.match(/^(\d+)\s+targets?$/i);
+  if (targetMatch) return `${formatNumber(targetMatch[1])} 个目标`;
+
+  if (/^(ok|partial|error|not_configured|empty|mock|disabled)$/i.test(detail)) {
+    return localizeStatus(detail);
+  }
+
+  return detail;
 }
 
 function localizeSkepticVerdict(verdict) {
@@ -2351,12 +2187,11 @@ function localizeSkepticVerdict(verdict) {
   }[value] || "需要复核";
 }
 
-function localizeSkepticHeadline(headline, verdict) {
+function localizeSkepticHeadline(headline, verdict, scope = null) {
   if (state.locale !== "zh") return headline || localizeSkepticVerdict(verdict);
   const specificHeadline = String(headline || "").trim();
-  if (specificHeadline && state.translations.items?.[specificHeadline]) {
-    return state.translations.items[specificHeadline];
-  }
+  const localizedHeadline = lookupLocalizedText(specificHeadline, scope);
+  if (localizedHeadline) return localizedHeadline;
   return {
     needs_human_review: "有几个信号比较重，先找人认真看一遍，别只听项目方怎么说。",
     narrative_outpaces_evidence: "宣传说得多，但现在能查到的证据还跟不上。",

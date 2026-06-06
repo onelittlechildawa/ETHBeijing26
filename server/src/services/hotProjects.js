@@ -419,6 +419,7 @@ function buildHotProjectItem(candidate, report) {
     agentSummaries: (skepticReview.agentReview?.summaries || []).slice(0, 4),
     recommendations: (report.recommendations || []).slice(0, 2),
     primaryFindings: materialFindings,
+    localized: report.localized,
     analyzedAt: report.generatedAt
   };
 }

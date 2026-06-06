@@ -39,7 +39,7 @@ The result is a structured report with findings, risk flags, and links to the ac
 
 - **Hot Projects List** — A daily-refreshed list of trending Ethereum/Uniswap tokens, each pre-checked by ChainLens
 - **Report Notarization** — Optionally stamp your report's hash on Sepolia testnet so you can prove "I checked this project on this date and got these results"
-- **Chinese / English** — Full bilingual UI; reports auto-translate when you switch languages
+- **Chinese / English** — Full bilingual UI; the report API returns English fields plus Chinese display copy for the UI
 
 ## Quick Start
 
@@ -60,12 +60,6 @@ ChainLens collects all the evidence itself — it scrapes sites, reads repos, pu
 OPENAI_BASE_URL=https://your-llm-provider.com/v1
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=your_model_name
-```
-
-### Required: Translation (for Chinese UI)
-
-```bash
-DEEPLX_API_URL=https://api.deeplx.org/your_key/translate
 ```
 
 ### Optional: Extra Data Sources
@@ -167,7 +161,7 @@ chainlens/
 │           ├── contractSearch.js    # CoinGecko + Sourcify lookups
 │           ├── hotProjects.js       # Trending projects logic
 │           ├── reportNotary.js      # Sepolia notarization
-│           ├── translate.js         # DeepLX translation
+│           ├── reportLocalization.js # Bilingual report display copy
 │           └── ...
 ├── contracts/       # Solidity: report notary contract
 ├── api/             # Vercel serverless function entry
@@ -321,11 +315,7 @@ OPENAI_API_KEY=你的密钥
 OPENAI_MODEL=模型名
 ```
 
-### 必填：翻译（中文界面用）
-
-```bash
-DEEPLX_API_URL=https://api.deeplx.org/你的key/translate
-```
+报告 API 会保留英文原文，同时返回中文界面用的 `localized.zh.texts`，不需要另外配置翻译服务。
 
 ### 选填：更多数据源
 
