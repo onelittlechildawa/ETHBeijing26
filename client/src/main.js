@@ -18,6 +18,7 @@ import {
   Lightbulb,
   Loader2,
   Network,
+  Plus,
   Printer,
   RefreshCw,
   Search,
@@ -35,9 +36,11 @@ const DEFAULT_CHAIN_ID = "1";
 
 const STORAGE_KEYS = {
   locale: "chainlens.locale",
-  history: "chainlens.history"
+  history: "chainlens.history",
+  wallets: "chainlens.wallets"
 };
 const MAX_HISTORY_ITEMS = 10;
+const MAX_WALLET_ITEMS = 12;
 
 const messages = {
   en: {
@@ -168,6 +171,18 @@ const messages = {
     walletProviderUnavailable: "Wallet provider unavailable.",
     connectWallet: "Connect Wallet",
     connected: "Connected",
+    addWallet: "Add Wallet",
+    savedWallets: "Saved wallets",
+    activeWallet: "Active wallet",
+    switchWallet: "Switch wallet",
+    unbindWallet: "Unbind wallet",
+    manualWallet: "Manual address",
+    connectedWallet: "Connected wallet",
+    walletAddressLabel: "Wallet address",
+    walletAddressPlaceholder: "Paste 0x wallet address",
+    walletAddressInvalid: "Enter a valid wallet address.",
+    walletAlreadyAdded: "Wallet is already added.",
+    walletRpcRequired: "Connect a wallet provider to run exposure checks for this address.",
     recheckExposure: "Recheck Exposure",
     checking: "Checking",
     checkingWalletExposure: "Checking wallet exposure.",
@@ -339,6 +354,18 @@ const messages = {
     walletProviderUnavailable: "未检测到钱包插件。",
     connectWallet: "连接钱包",
     connected: "已连接",
+    addWallet: "添加钱包",
+    savedWallets: "已绑定钱包",
+    activeWallet: "当前钱包",
+    switchWallet: "切换钱包",
+    unbindWallet: "解绑钱包",
+    manualWallet: "手动地址",
+    connectedWallet: "已连接钱包",
+    walletAddressLabel: "钱包地址",
+    walletAddressPlaceholder: "粘贴 0x 钱包地址",
+    walletAddressInvalid: "请输入有效的钱包地址。",
+    walletAlreadyAdded: "这个钱包已经添加过了。",
+    walletRpcRequired: "连接钱包插件后才能检查这个地址的链上暴露。",
     recheckExposure: "重新检查暴露",
     checking: "检查中",
     checkingWalletExposure: "正在检查钱包暴露。",
@@ -384,6 +411,8 @@ const messages = {
   }
 };
 
+const savedWalletBindings = loadWalletBindings();
+
 let state = {
   loading: false,
   error: null,
@@ -403,8 +432,10 @@ let state = {
   },
   wallet: {
     provider: null,
-    account: null,
+    account: savedWalletBindings[0]?.address || null,
     chainId: null,
+    wallets: savedWalletBindings,
+    manualAddress: "",
     loading: false,
     error: null,
     exposure: null
@@ -533,16 +564,28 @@ function bindEvents() {
     });
   });
 
-  const walletAction = document.querySelector("#wallet-action");
-  if (walletAction) {
-    walletAction.addEventListener("click", () => {
-      if (walletAction.dataset.action === "connect") {
+  document.querySelectorAll("[data-wallet-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.walletAction === "connect") {
         connectWalletForReport();
-      } else if (walletAction.dataset.action === "refresh") {
+      } else if (button.dataset.walletAction === "refresh") {
         runWalletExposure();
       }
     });
-  }
+  });
+
+  document.querySelectorAll("[data-wallet-select]").forEach((button) => {
+    button.addEventListener("click", () => selectWallet(button.dataset.walletSelect));
+  });
+
+  document.querySelectorAll("[data-wallet-remove]").forEach((button) => {
+    button.addEventListener("click", () => unbindWallet(button.dataset.walletRemove));
+  });
+
+  document.querySelector("#wallet-manual-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addManualWallet(document.querySelector("#wallet-manual-input")?.value || "");
+  });
 }
 
 async function runAnalysis({ chainId, query, address }) {
@@ -720,12 +763,23 @@ async function connectWalletForReport() {
   try {
     const connection = await connectWallet();
     bindWalletProviderEvents(connection.provider);
+    const connectedWallets = (connection.accounts?.length ? connection.accounts : [connection.wallet])
+      .filter(isWalletAddress);
+    const wallets = persistWalletBindings(
+      connectedWallets.reduce(
+        (items, address) => upsertWalletBinding(items, address, "connected"),
+        state.wallet.wallets || []
+      )
+    );
+    const activeAccount = normalizeWalletAddress(connection.wallet || connectedWallets[0]);
     state = {
       ...state,
       wallet: {
+        ...state.wallet,
         provider: connection.provider,
-        account: connection.wallet,
+        account: activeAccount || state.wallet.account,
         chainId: connection.chainId,
+        wallets,
         loading: false,
         error: null,
         exposure: null
@@ -747,6 +801,87 @@ async function connectWalletForReport() {
       }
     };
     render();
+  }
+}
+
+function addManualWallet(address) {
+  const normalized = normalizeWalletAddress(address);
+  if (!normalized) {
+    state = {
+      ...state,
+      wallet: {
+        ...state.wallet,
+        manualAddress: address.trim(),
+        error: t("walletAddressInvalid")
+      }
+    };
+    render();
+    return;
+  }
+
+  const alreadyAdded = (state.wallet.wallets || []).some((wallet) => wallet.address === normalized);
+  const wallets = persistWalletBindings(upsertWalletBinding(state.wallet.wallets || [], normalized, "manual"));
+  state = {
+    ...state,
+    wallet: {
+      ...state.wallet,
+      account: normalized,
+      wallets,
+      manualAddress: "",
+      loading: false,
+      error: alreadyAdded ? t("walletAlreadyAdded") : null,
+      exposure: null
+    }
+  };
+  render();
+
+  if (!alreadyAdded && state.report && state.wallet.provider) {
+    runWalletExposure();
+  }
+}
+
+function selectWallet(address) {
+  const normalized = normalizeWalletAddress(address);
+  if (!normalized || normalized === state.wallet.account) return;
+
+  state = {
+    ...state,
+    wallet: {
+      ...state.wallet,
+      account: normalized,
+      loading: false,
+      error: null,
+      exposure: null
+    }
+  };
+  render();
+
+  if (state.report && state.wallet.provider) {
+    runWalletExposure();
+  }
+}
+
+function unbindWallet(address) {
+  const normalized = normalizeWalletAddress(address);
+  if (!normalized) return;
+
+  const wallets = persistWalletBindings((state.wallet.wallets || []).filter((wallet) => wallet.address !== normalized));
+  const nextAccount = state.wallet.account === normalized ? wallets[0]?.address || null : state.wallet.account;
+  state = {
+    ...state,
+    wallet: {
+      ...state.wallet,
+      account: nextAccount,
+      wallets,
+      loading: false,
+      error: null,
+      exposure: null
+    }
+  };
+  render();
+
+  if (state.report && state.wallet.provider && nextAccount) {
+    runWalletExposure();
   }
 }
 
@@ -799,11 +934,19 @@ function bindWalletProviderEvents(provider) {
   boundWalletProvider = provider;
 
   provider.on("accountsChanged", (accounts) => {
+    const connectedWallets = (accounts || []).filter(isWalletAddress);
+    const wallets = persistWalletBindings(
+      connectedWallets.reduce(
+        (items, address) => upsertWalletBinding(items, address, "connected"),
+        state.wallet.wallets || []
+      )
+    );
     state = {
       ...state,
       wallet: {
         ...state.wallet,
-        account: accounts?.[0] || null,
+        account: normalizeWalletAddress(accounts?.[0]) || state.wallet.account,
+        wallets,
         exposure: null,
         error: null
       }
@@ -1208,6 +1351,7 @@ function walletPanelTemplate(report, wallet) {
   const providerAvailable = hasWalletProvider();
   const status = walletStatus(report, wallet, providerAvailable);
   const contractCount = report?.project?.contracts?.length || 0;
+  const activeWallet = activeWalletBinding(wallet);
 
   return `
     <section class="wallet-panel" aria-label="${t("yourWalletExposure")}">
@@ -1220,15 +1364,14 @@ function walletPanelTemplate(report, wallet) {
       </div>
 
       <div class="wallet-summary-grid">
-        ${walletMetric(t("wallet"), wallet.account ? shortAddress(wallet.account) : t("notConnected"))}
+        ${walletMetric(t("wallet"), activeWallet ? shortAddress(activeWallet.address) : t("notConnected"))}
         ${walletMetric(t("walletChain"), wallet.chainId || "N/A")}
         ${walletMetric(t("projectContracts"), report ? formatNumber(contractCount) : "N/A")}
-        ${walletMetric(t("mode"), t("readOnly"))}
+        ${walletMetric(t("mode"), activeWallet ? walletSourceLabel(activeWallet.source) : t("readOnly"))}
       </div>
 
-      <div class="wallet-actions">
-        ${walletActionTemplate(report, wallet, providerAvailable)}
-      </div>
+      ${walletControlsTemplate(report, wallet, providerAvailable)}
+      ${walletListTemplate(wallet)}
 
       ${walletBodyTemplate(report, wallet, providerAvailable)}
     </section>
@@ -1236,10 +1379,6 @@ function walletPanelTemplate(report, wallet) {
 }
 
 function walletBodyTemplate(report, wallet, providerAvailable) {
-  if (!providerAvailable) {
-    return `<div class="wallet-empty">${icon(AlertTriangle)} <span>${t("walletProviderUnavailable")}</span></div>`;
-  }
-
   if (wallet.error) {
     return `<div class="wallet-alert">${icon(AlertTriangle)} <span>${escapeHtml(wallet.error)}</span></div>`;
   }
@@ -1250,6 +1389,10 @@ function walletBodyTemplate(report, wallet, providerAvailable) {
 
   if (!report) {
     return `<div class="wallet-empty">${icon(Search)} <span>${t("noProjectReportSelected")}</span></div>`;
+  }
+
+  if (!wallet.provider) {
+    return `<div class="wallet-empty">${icon(AlertTriangle)} <span>${providerAvailable ? t("walletRpcRequired") : t("walletProviderUnavailable")}</span></div>`;
   }
 
   if (wallet.loading) {
@@ -1286,31 +1429,85 @@ function walletBodyTemplate(report, wallet, providerAvailable) {
 }
 
 function walletActionTemplate(report, wallet, providerAvailable) {
-  if (!providerAvailable) {
-    return `<button id="wallet-action" class="secondary-action" type="button" disabled>${t("walletUnavailable")}</button>`;
-  }
-
-  if (!wallet.account) {
-    return `<button id="wallet-action" class="secondary-action" type="button" data-action="connect">${icon(WalletCards)} <span>${t("connectWallet")}</span></button>`;
-  }
-
-  if (!report) {
-    return `<button id="wallet-action" class="secondary-action" type="button" disabled>${icon(CheckCircle2)} <span>${t("connected")}</span></button>`;
-  }
-
-  return `<button id="wallet-action" class="secondary-action" type="button" data-action="refresh" ${wallet.loading ? "disabled" : ""}>${wallet.loading ? icon(Loader2, "spin") : icon(Activity)} <span>${wallet.loading ? t("checking") : t("recheckExposure")}</span></button>`;
+  const connectDisabled = !providerAvailable || wallet.loading ? "disabled" : "";
+  const refreshDisabled = wallet.loading || !wallet.provider || !wallet.account || !report ? "disabled" : "";
+  return `
+    <button class="secondary-action" type="button" data-wallet-action="connect" ${connectDisabled}>
+      ${icon(WalletCards)} <span>${providerAvailable ? t("connectWallet") : t("walletUnavailable")}</span>
+    </button>
+    <button class="secondary-action" type="button" data-wallet-action="refresh" ${refreshDisabled}>
+      ${wallet.loading ? icon(Loader2, "spin") : icon(Activity)} <span>${wallet.loading ? t("checking") : t("recheckExposure")}</span>
+    </button>
+  `;
 }
 
 function walletStatus(report, wallet, providerAvailable) {
-  if (!providerAvailable) return { key: "unavailable", label: t("unavailable") };
   if (wallet.loading) return { key: "checking", label: t("checking") };
   if (wallet.error) return { key: "error", label: t("error") };
   if (!wallet.account) return { key: "idle", label: t("idle") };
+  if (!wallet.provider || !providerAvailable) return { key: "unavailable", label: t("unavailable") };
   if (!report) return { key: "connected", label: t("connected") };
   if (wallet.exposure?.status === "chain_mismatch") return { key: "mismatch", label: t("mismatch") };
   if (wallet.exposure?.status === "contract_specific_unavailable") return { key: "connected", label: t("contractSpecific") };
   if (wallet.exposure?.status === "ok") return { key: "ok", label: t("checked") };
   return { key: "connected", label: t("connected") };
+}
+
+function walletControlsTemplate(report, wallet, providerAvailable) {
+  return `
+    <div class="wallet-manager">
+      <form id="wallet-manual-form" class="wallet-manual-form">
+        <label class="wallet-manual-field">
+          <span>${t("walletAddressLabel")}</span>
+          <input id="wallet-manual-input" value="${escapeHtml(wallet.manualAddress || "")}" placeholder="${t("walletAddressPlaceholder")}" spellcheck="false" autocomplete="off" ${wallet.loading ? "disabled" : ""} />
+        </label>
+        <button class="secondary-action" type="submit" ${wallet.loading ? "disabled" : ""}>
+          ${icon(Plus)} <span>${t("addWallet")}</span>
+        </button>
+      </form>
+      <div class="wallet-actions">
+        ${walletActionTemplate(report, wallet, providerAvailable)}
+      </div>
+    </div>
+  `;
+}
+
+function walletListTemplate(wallet) {
+  const wallets = wallet.wallets || [];
+  if (!wallets.length) return "";
+
+  return `
+    <div class="wallet-section wallet-switch-section">
+      <div class="section-title">
+        <h3>${t("savedWallets")}</h3>
+        <span>${formatNumber(wallets.length)}</span>
+      </div>
+      <div class="wallet-switch-list">
+        ${wallets.map((item) => walletSwitchItemTemplate(item, wallet)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function walletSwitchItemTemplate(item, wallet) {
+  const active = item.address === wallet.account;
+  const disabled = wallet.loading ? "disabled" : "";
+  const label = active ? t("activeWallet") : t("switchWallet");
+
+  return `
+    <article class="wallet-switch-item ${active ? "active" : ""}">
+      <button class="wallet-switch-button" type="button" data-wallet-select="${escapeHtml(item.address)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${disabled}>
+        ${icon(WalletCards)}
+        <span>
+          <strong>${escapeHtml(shortAddress(item.address))}</strong>
+          <small>${escapeHtml(walletSourceLabel(item.source))}</small>
+        </span>
+      </button>
+      <button class="icon-action compact-action danger" type="button" data-wallet-remove="${escapeHtml(item.address)}" title="${t("unbindWallet")}" aria-label="${t("unbindWallet")}" ${disabled}>
+        ${icon(Trash2)}
+      </button>
+    </article>
+  `;
 }
 
 function walletRecordsSection(title, records, template) {
@@ -1773,6 +1970,80 @@ function saveLocale(locale) {
   } catch {
     // Local storage can be unavailable in private contexts; the in-memory state still works.
   }
+}
+
+function loadWalletBindings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.wallets) || "[]");
+    if (!Array.isArray(parsed)) return [];
+
+    return dedupeWalletBindings(parsed
+      .map((item) => ({
+        address: normalizeWalletAddress(item?.address),
+        source: item?.source === "connected" ? "connected" : "manual",
+        addedAt: item?.addedAt || new Date().toISOString()
+      }))
+      .filter((item) => item.address))
+      .slice(0, MAX_WALLET_ITEMS);
+  } catch {
+    return [];
+  }
+}
+
+function persistWalletBindings(wallets) {
+  const next = dedupeWalletBindings(wallets).slice(0, MAX_WALLET_ITEMS);
+  try {
+    localStorage.setItem(STORAGE_KEYS.wallets, JSON.stringify(next));
+  } catch {
+    // Local storage can be unavailable in private contexts; the in-memory state still works.
+  }
+  return next;
+}
+
+function upsertWalletBinding(wallets, address, source = "manual") {
+  const normalized = normalizeWalletAddress(address);
+  if (!normalized) return dedupeWalletBindings(wallets);
+
+  const existing = (wallets || []).find((item) => item.address === normalized);
+  const nextItem = {
+    address: normalized,
+    source: source === "connected" || existing?.source === "connected" ? "connected" : "manual",
+    addedAt: existing?.addedAt || new Date().toISOString()
+  };
+
+  return dedupeWalletBindings([nextItem, ...(wallets || []).filter((item) => item.address !== normalized)]);
+}
+
+function dedupeWalletBindings(wallets) {
+  const seen = new Set();
+  return (wallets || [])
+    .map((item) => ({
+      address: normalizeWalletAddress(item?.address),
+      source: item?.source === "connected" ? "connected" : "manual",
+      addedAt: item?.addedAt || new Date().toISOString()
+    }))
+    .filter((item) => {
+      if (!item.address || seen.has(item.address)) return false;
+      seen.add(item.address);
+      return true;
+    });
+}
+
+function normalizeWalletAddress(address) {
+  const value = String(address || "").trim();
+  return isWalletAddress(value) ? value.toLowerCase() : null;
+}
+
+function isWalletAddress(address) {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(address || "").trim());
+}
+
+function activeWalletBinding(wallet) {
+  return (wallet.wallets || []).find((item) => item.address === wallet.account) || null;
+}
+
+function walletSourceLabel(source) {
+  return source === "connected" ? t("connectedWallet") : t("manualWallet");
 }
 
 function loadHistory() {
