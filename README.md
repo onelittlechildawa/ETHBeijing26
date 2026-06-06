@@ -35,6 +35,43 @@ XAPI_SEARCH_URL=optional_full_xapi_search_endpoint
 
 Without xAPI, ChainLens still fetches user-provided websites, GitHub links, and PDF whitepapers. `XAPI_*` is only used as an external web-search connector when both `XAPI_API_KEY` and `XAPI_SEARCH_URL` are configured.
 
+## Vercel Deployment
+
+This repo is configured for a single Vercel project: the Vite client builds to `client/dist`, and the Express API is exported through Vercel Functions under `/api/*`.
+
+Import the Git repository in Vercel with the repository root as the project root. The checked-in `vercel.json` sets:
+
+```text
+Build Command: npm run build
+Output Directory: client/dist
+```
+
+Add these server-side environment variables in Vercel Project Settings:
+
+```bash
+OPENAI_BASE_URL=https://opencode.ai/zen/go/v1
+OPENAI_API_KEY=replace_with_a_rotated_key
+OPENAI_MODEL=glm-5.1
+OPENAI_TIMEOUT_MS=90000
+```
+
+Optional:
+
+```bash
+GITHUB_TOKEN=optional_public_repo_rate_limit_token
+XAPI_API_KEY=optional_xapi_key
+XAPI_SEARCH_URL=optional_full_xapi_search_endpoint
+```
+
+Do not create `VITE_*` copies of server credentials. In production, the client calls the API on the same origin, so `VITE_API_BASE` is usually unnecessary. If a real API key was ever shared outside your machine, rotate it before adding it to Vercel.
+
+After importing the project, Git integration can create Preview Deployments for branches and Production Deployments for the production branch. To verify the Vercel build locally after the project is linked:
+
+```bash
+npx vercel pull --yes --environment=preview
+npx vercel build --yes
+```
+
 ## API
 
 `GET /api/analyze` and `POST /api/analyze` run asset-level analysis:

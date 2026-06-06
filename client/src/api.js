@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8787";
+const DEFAULT_API_BASE = import.meta.env.PROD ? window.location.origin : "http://localhost:8787";
+const API_BASE = import.meta.env.VITE_API_BASE || DEFAULT_API_BASE;
 
 export async function analyzeToken({ chainId, address }) {
   const url = new URL("/api/analyze", API_BASE);

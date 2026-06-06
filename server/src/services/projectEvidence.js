@@ -1,4 +1,3 @@
-import { PDFParse } from "pdf-parse";
 import { cached } from "./cache.js";
 import { isBurnAddress } from "./knownAddresses.js";
 
@@ -159,28 +158,47 @@ async function fetchWebArtifact(url) {
 }
 
 async function buildPdfArtifact(url, contentType, buffer) {
-  const parser = new PDFParse({ data: buffer });
   try {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: buffer });
     const result = await parser.getText();
-    const text = normalizeText(result.text || "");
+    try {
+      const text = normalizeText(result.text || "");
+      return normalizeArtifact({
+        type: "whitepaper",
+        title: result.info?.Title || titleFromUrl(url),
+        url,
+        status: "ok",
+        summary: summarizeText(text),
+        excerpts: selectExcerpts(text),
+        facts: {
+          contentType: contentType || "application/pdf",
+          bytes: buffer.byteLength,
+          pages: result.total || null,
+          textChars: text.length
+        },
+        addresses: extractAddresses(text),
+        links: extractEvidenceUrls(text).map((link) => ({ type: categorizeSurface(link), label: "PDF link", url: link }))
+      });
+    } finally {
+      await parser.destroy();
+    }
+  } catch (error) {
     return normalizeArtifact({
       type: "whitepaper",
-      title: result.info?.Title || titleFromUrl(url),
+      title: titleFromUrl(url),
       url,
-      status: "ok",
-      summary: summarizeText(text),
-      excerpts: selectExcerpts(text),
+      status: "unreadable",
+      summary: "PDF text extraction is unavailable in this runtime.",
+      excerpts: [],
       facts: {
         contentType: contentType || "application/pdf",
         bytes: buffer.byteLength,
-        pages: result.total || null,
-        textChars: text.length
+        parseError: error.message
       },
-      addresses: extractAddresses(text),
-        links: extractEvidenceUrls(text).map((link) => ({ type: categorizeSurface(link), label: "PDF link", url: link }))
+      addresses: [],
+      links: []
     });
-  } finally {
-    await parser.destroy();
   }
 }
 
